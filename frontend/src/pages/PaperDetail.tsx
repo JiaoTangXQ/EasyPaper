@@ -15,11 +15,13 @@ import {
     StickyNote,
     Plus,
     Loader2,
+    BookOpenCheck,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/errors";
 
 interface PaperKnowledge {
     id: string;
@@ -67,6 +69,7 @@ const PaperDetail = () => {
     const [paper, setPaper] = useState<PaperKnowledge | null>(null);
     const [loading, setLoading] = useState(true);
     const [newNote, setNewNote] = useState("");
+    const [obsidianSyncing, setObsidianSyncing] = useState(false);
 
     useEffect(() => {
         const fetchPaper = async () => {
@@ -97,6 +100,23 @@ const PaperDetail = () => {
             toast.success("已导出为 .epaper.json。");
         } catch {
             toast.error("导出失败。");
+        }
+    };
+
+    const handleSyncObsidian = async () => {
+        if (!paperId) return;
+        setObsidianSyncing(true);
+        try {
+            const response = await api.post(`/api/knowledge/papers/${paperId}/sync/obsidian`);
+            if (response.data.status === "partial") {
+                toast.warning("部分笔记已同步到 Obsidian，部分文件写入失败。");
+            } else {
+                toast.success("已同步到 Obsidian。");
+            }
+        } catch (error) {
+            toast.error(getApiErrorMessage(error, "同步到 Obsidian 失败。"));
+        } finally {
+            setObsidianSyncing(false);
         }
     };
 
@@ -164,10 +184,26 @@ const PaperDetail = () => {
                         </div>
                     )}
                 </div>
-                <Button variant="outline" size="sm" className="gap-2 shrink-0" onClick={handleExport}>
-                    <Download className="h-4 w-4" />
-                    .epaper.json
-                </Button>
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={handleSyncObsidian}
+                        disabled={obsidianSyncing}
+                    >
+                        {obsidianSyncing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <BookOpenCheck className="h-4 w-4" />
+                        )}
+                        同步 Obsidian
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={handleExport}>
+                        <Download className="h-4 w-4" />
+                        .epaper.json
+                    </Button>
+                </div>
             </div>
 
             {/* Abstract */}

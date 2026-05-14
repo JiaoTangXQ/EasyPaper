@@ -110,3 +110,48 @@ def test_create_annotation_accepts_json_body(monkeypatch):
         assert annotation is not None
         assert annotation.type == "note"
         assert json.loads(annotation.tags_json) == ["reading", "important"]
+
+
+def test_get_paper_includes_live_flashcards_and_annotations(monkeypatch):
+    client, engine = _build_client(monkeypatch)
+    with Session(engine) as session:
+        paper = session.get(PaperKnowledge, "paper-1")
+        assert paper is not None
+        paper.knowledge_json = json.dumps(
+            {
+                "id": "paper-1",
+                "metadata": {"title": "Test Paper", "authors": []},
+                "flashcards": [],
+                "annotations": [],
+            }
+        )
+        session.add(
+            Flashcard(
+                id="fc-live",
+                paper_id="paper-1",
+                user_id=1,
+                front="Live question?",
+                back="Live answer.",
+                tags_json=json.dumps(["live"]),
+                difficulty=2,
+            )
+        )
+        session.add(
+            UserAnnotation(
+                id="ann-live",
+                paper_id="paper-1",
+                user_id=1,
+                type="note",
+                content="Live note",
+            )
+        )
+        session.add(paper)
+        session.commit()
+
+    response = client.get("/api/knowledge/papers/paper-1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["flashcards"][0]["front"] == "Live question?"
+    assert body["flashcards"][0]["tags"] == ["live"]
+    assert body["annotations"][0]["content"] == "Live note"

@@ -58,9 +58,12 @@ Your knowledge is yours. Export it in any format:
 |--------|-----------|----------|
 | EasyPaper JSON | `.epaper.json` | Complete portable knowledge (primary format) |
 | Obsidian Vault | `.zip` | Markdown notes with wikilinks for Obsidian |
+| Local Obsidian Sync | `.md` files | Write paper and entity notes directly into a local vault |
 | BibTeX | `.bib` | LaTeX citation management |
 | CSL-JSON | `.json` | Zotero / Mendeley compatible |
 | CSV | `.zip` | Spreadsheet analysis (entities + relationships) |
+
+Local Obsidian sync detects vaults on macOS, Windows, and Linux. You can also paste a vault path manually. A synced paper note includes the generated summary (when available), metadata, section summaries, findings, methods, datasets, entities, relationships, flashcards, and user notes. EasyPaper writes managed paper/entity notes only; the linked `Paper Title - Notes.md` file is not created until you click it in Obsidian. Deleting a paper in EasyPaper does not delete existing Obsidian `.md` files.
 
 ### 6. Flashcard Review
 
@@ -95,6 +98,8 @@ docker compose up --build
 ```
 
 Open http://localhost in your browser.
+
+For local Obsidian sync in Docker, mount your host vault into the backend container and use the mounted path in the Knowledge Base settings. Without a mount, the container cannot access files on your host machine.
 
 ### Option 2: Local Development
 
@@ -238,6 +243,9 @@ curl -X POST http://127.0.0.1:8000/api/agent/v1/translate \
 | `POST /api/knowledge/flashcards/{id}/review` | Submit review result |
 | `GET /api/knowledge/export/json` | Export full knowledge base |
 | `GET /api/knowledge/export/obsidian` | Export as Obsidian vault |
+| `GET /api/knowledge/settings/obsidian/vaults` | Detect local Obsidian vaults |
+| `POST /api/knowledge/settings/obsidian` | Save local Obsidian sync settings |
+| `POST /api/knowledge/papers/{id}/sync/obsidian` | Sync one paper to local Obsidian |
 | `GET /api/knowledge/export/bibtex` | Export as BibTeX |
 
 ---

@@ -21,6 +21,7 @@ from ..models.knowledge import (
     Flashcard,
     KnowledgeEntity,
     KnowledgeRelationship,
+    ObsidianSyncMapping,
     PaperKnowledge,
     UserAnnotation,
 )
@@ -28,6 +29,7 @@ from ..models.task import Task, TaskStatus
 from ..models.user import User
 from ..services.background_tasks import create_tracked_task
 from ..services.knowledge_extractor import KnowledgeExtractor
+from ..services.obsidian_sync import ObsidianSyncService, get_obsidian_sync_lock
 from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,11 @@ class CreateAnnotationRequest(BaseModel):
     target_type: str = "paper"
     target_id: str = ""
     tags: str | list[str] = ""
+
+
+class ObsidianSettingsRequest(BaseModel):
+    vault_path: str
+    root_folder: str = "EasyPaper"
 
 
 def _normalize_tags(tags: str | list[str]) -> list[str]:
@@ -95,6 +102,55 @@ def _ensure_extracting_paper(
 def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
     limiter = Limiter(key_func=get_remote_address)
+
+    # ------------------------------------------------------------------
+    # Obsidian 本地同步设置
+    # ------------------------------------------------------------------
+
+    @router.get("/settings/obsidian/vaults")
+    async def detect_obsidian_vaults(
+        user: User = Depends(get_current_user),  # noqa: ARG001
+    ) -> dict[str, Any]:
+        with Session(engine) as session:
+            service = ObsidianSyncService(session)
+            return {"vaults": service.detect_vaults()}
+
+    @router.get("/settings/obsidian")
+    async def get_obsidian_settings(
+        user: User = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        with Session(engine) as session:
+            service = ObsidianSyncService(session)
+            settings = service.get_settings(user.id)
+        return settings or {"vault_path": "", "root_folder": "EasyPaper", "updated_at": None}
+
+    @router.post("/settings/obsidian")
+    async def save_obsidian_settings(
+        payload: ObsidianSettingsRequest,
+        user: User = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        with Session(engine) as session:
+            service = ObsidianSyncService(session)
+            try:
+                return service.save_settings(
+                    user_id=user.id,
+                    vault_path=payload.vault_path,
+                    root_folder=payload.root_folder,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/settings/obsidian/test")
+    async def test_obsidian_settings(
+        payload: ObsidianSettingsRequest,
+        user: User = Depends(get_current_user),  # noqa: ARG001
+    ) -> dict[str, Any]:
+        with Session(engine) as session:
+            service = ObsidianSyncService(session)
+            try:
+                return service.test_write(vault_path=payload.vault_path, root_folder=payload.root_folder)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ------------------------------------------------------------------
     # 知识提取
@@ -204,13 +260,47 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         """获取单篇论文的完整知识 JSON。"""
         with Session(engine) as session:
             paper = session.get(PaperKnowledge, paper_id)
-        if not paper:
-            raise HTTPException(status_code=404, detail="论文不存在")
-        if paper.user_id != user.id:
-            raise HTTPException(status_code=403, detail="无权访问")
-        if paper.knowledge_json:
-            return json.loads(paper.knowledge_json)
-        return {"id": paper.id, "title": paper.title, "extraction_status": paper.extraction_status}
+            if not paper:
+                raise HTTPException(status_code=404, detail="论文不存在")
+            if paper.user_id != user.id:
+                raise HTTPException(status_code=403, detail="无权访问")
+            if paper.knowledge_json:
+                data = json.loads(paper.knowledge_json)
+                cards = session.exec(
+                    select(Flashcard).where(Flashcard.paper_id == paper_id).where(Flashcard.user_id == user.id)
+                ).all()
+                annotations = session.exec(
+                    select(UserAnnotation)
+                    .where(UserAnnotation.paper_id == paper_id)
+                    .where(UserAnnotation.user_id == user.id)
+                    .order_by(UserAnnotation.created_at.desc())
+                ).all()
+                data["flashcards"] = [_flashcard_to_dict(card) for card in cards]
+                data["annotations"] = [_annotation_to_dict(annotation) for annotation in annotations]
+                return data
+            return {"id": paper.id, "title": paper.title, "extraction_status": paper.extraction_status}
+
+    @router.post("/papers/{paper_id}/sync/obsidian")
+    async def sync_paper_to_obsidian(
+        paper_id: str,
+        user: User = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        """同步单篇论文知识到本地 Obsidian vault。"""
+        lock = get_obsidian_sync_lock(user.id, paper_id)
+        if not lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="该论文正在同步到 Obsidian")
+
+        try:
+            with Session(engine) as session:
+                service = ObsidianSyncService(session)
+                try:
+                    return service.sync_paper(user_id=user.id, paper_id=paper_id)
+                except LookupError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            lock.release()
 
     @router.delete("/papers/{paper_id}")
     async def delete_paper(
@@ -226,7 +316,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
                 raise HTTPException(status_code=403, detail="无权访问")
 
             # 删除关联数据
-            for model in (Flashcard, UserAnnotation, KnowledgeRelationship, KnowledgeEntity):
+            for model in (Flashcard, UserAnnotation, KnowledgeRelationship, KnowledgeEntity, ObsidianSyncMapping):
                 items = session.exec(select(model).where(model.paper_id == paper_id)).all()
                 for item in items:
                     session.delete(item)
@@ -674,6 +764,17 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
                 "next_review": card.next_review.isoformat() if card.next_review else None,
                 "last_review": card.last_review.isoformat() if card.last_review else None,
             },
+        }
+
+    def _annotation_to_dict(annotation: UserAnnotation) -> dict[str, Any]:
+        return {
+            "id": annotation.id,
+            "type": annotation.type,
+            "content": annotation.content,
+            "target_type": annotation.target_type,
+            "target_id": annotation.target_id,
+            "tags": json.loads(annotation.tags_json) if annotation.tags_json else [],
+            "created_at": annotation.created_at.isoformat() if annotation.created_at else None,
         }
 
     return router

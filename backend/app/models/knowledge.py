@@ -95,3 +95,29 @@ class UserAnnotation(SQLModel, table=True):
     tags_json: str | None = Field(default=None)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UserSetting(SQLModel, table=True):
+    """用户级运行时设置，避免把本地路径写入 config.yaml。"""
+
+    id: str = Field(primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    key: str = Field(index=True)
+    value_json: str
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ObsidianSyncMapping(SQLModel, table=True):
+    """EasyPaper 对应到 Obsidian 文件的映射。"""
+
+    id: str = Field(primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    paper_id: str = Field(foreign_key="paperknowledge.id", index=True)
+    item_type: str = Field(index=True)  # paper|entity
+    item_id: str = Field(index=True)
+    source_name: str
+    normalized_key: str = Field(index=True)
+    vault_path: str
+    relative_path: str
+    content_hash: str
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
