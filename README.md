@@ -2,7 +2,7 @@
 
 **Turn academic papers into knowledge you keep.**
 
-EasyPaper is a self-hosted web app that helps you read, understand, and retain knowledge from English academic papers. Upload a PDF — get back a translated or simplified version with layout intact, AI-highlighted key sentences, and a portable knowledge base you can export anywhere.
+EasyPaper is a self-hosted web app that helps you read, understand, and retain knowledge from English academic papers. Upload a PDF or paste a paper link — get back a translated or simplified version with layout intact, AI-highlighted key sentences, and a portable knowledge base you can export anywhere.
 
 [中文说明](README_zh.md)
 
@@ -14,17 +14,21 @@ EasyPaper is a self-hosted web app that helps you read, understand, and retain k
 
 - **English → Chinese** translation preserving layout, images, and formulas (powered by [pdf2zh](https://github.com/Byaidu/PDFMathTranslate))
 - **English → Simple English** vocabulary simplification (CEFR A2/B1, ~2000 common words)
+- Local PDF upload and direct PDF/arXiv/OpenReview link import
 - PDF-in, PDF-out — figures, equations, and formatting stay intact
+- Clean single-language PDF by default, with a bilingual side-by-side PDF available as a separate download
 
 ### 2. AI Highlighting
 
-Automatically identifies and color-codes key sentences in the processed PDF:
+Automatically identifies and color-codes key sentences in the processed PDF. The highlighter now uses backend-generated sentence IDs and PDF coordinates instead of brittle text search, which makes Chinese line breaks and punctuation more reliable.
 
 | Color | Category | What It Highlights |
 |-------|----------|-------------------|
 | Yellow | Core Conclusions | Main findings and research outcomes |
 | Blue | Method Innovations | Novel approaches and technical contributions |
 | Green | Key Data | Quantitative results, metrics, experimental data |
+
+The reader also includes a filterable highlight panel with page jumps, category counts, and failed-match status.
 
 ![AI Highlighting](imgs/img-5.png)
 
@@ -36,6 +40,7 @@ Extract structured knowledge from papers via LLM — stored as portable JSON, ne
 - **Relationships**: extends, uses, evaluates_on, outperforms, similar_to, contradicts, part_of, requires
 - **Findings**: results, limitations, contributions with evidence references
 - **Flashcards**: auto-generated study cards with SM-2 spaced repetition scheduling
+- **Extraction workflow**: start extraction from the reader, track status, and jump to the generated paper page when ready
 
 ![Knowledge Base — Paper Detail](imgs/img-2.png)
 
@@ -219,12 +224,14 @@ curl -X POST http://127.0.0.1:8000/api/agent/v1/translate \
 | Endpoint | Description |
 |----------|-------------|
 | `POST /api/upload` | Upload PDF (translate/simplify, optional highlight) |
-| `GET /api/status/{id}` | Processing status & progress |
-| `GET /api/result/{id}/pdf` | Download processed PDF |
+| `POST /api/upload-url` | Import a direct PDF/arXiv/OpenReview link |
+| `GET /api/status/{id}` | Processing status, progress, highlight stats, and available outputs |
+| `GET /api/result/{id}/pdf?format=mono\|dual` | Download processed PDF or bilingual PDF |
 | `POST /api/agent/v1/translate` | Agent translation draft + submit endpoint |
 | `GET /api/agent/v1/tasks/{id}` | Agent task status |
 | `GET /api/agent/v1/tasks/{id}/artifact` | Agent artifact download |
 | `POST /api/knowledge/extract/{id}` | Trigger knowledge extraction |
+| `GET /api/knowledge/extract/status/{paper_id}` | Poll knowledge extraction status |
 | `GET /api/knowledge/papers` | List knowledge base papers |
 | `GET /api/knowledge/graph` | Knowledge graph (entities + relationships) |
 | `GET /api/knowledge/flashcards/due` | Due flashcards for review |
