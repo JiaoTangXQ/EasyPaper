@@ -19,9 +19,7 @@ def create_agent_router(draft_service, execution_service, artifact_service) -> A
         if draft_response.status == "needs_input":
             return draft_response
 
-        accepted = await execution_service.submit_draft(
-            draft_service.get_draft(draft_response.draft_id)
-        )
+        accepted = await execution_service.submit_draft(draft_service.get_draft(draft_response.draft_id))
         return JSONResponse(status_code=202, content=accepted.model_dump())
 
     @router.get("/tasks/{task_id}")

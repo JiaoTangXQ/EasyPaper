@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/errors";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -109,9 +110,8 @@ const PaperSummary = () => {
             try {
                 const res = await api.post(`/api/summary/${taskId}`);
                 setData(res.data);
-            } catch (err: any) {
-                const msg =
-                    err.response?.data?.detail || "Failed to generate summary.";
+            } catch (err: unknown) {
+                const msg = getApiErrorMessage(err, "摘要生成失败。");
                 setError(msg);
                 toast.error(msg);
             } finally {
@@ -146,7 +146,7 @@ const PaperSummary = () => {
     if (error || !data) {
         return (
             <div className="flex h-[calc(100vh-8rem)] flex-col items-center justify-center gap-4">
-                <p className="text-sm text-red-500">{error || "No data"}</p>
+                <p className="text-sm text-red-500">{error || "暂无数据"}</p>
                 <Button variant="outline" onClick={() => navigate("/dashboard")}>
                     <ArrowLeft className="mr-2 h-4 w-4" /> 返回
                 </Button>

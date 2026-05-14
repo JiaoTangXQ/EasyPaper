@@ -13,7 +13,7 @@ import { LogOut, User as UserIcon, FileText, Brain } from "lucide-react";
 
 const Layout = () => {
     const navigate = useNavigate();
-    const userEmail = "User"; // TODO: Get from context or local storage if available
+    const userEmail = "用户"; // TODO: Get from context or local storage if available
 
     const handleLogout = () => {
         localStorage.removeItem("token");
@@ -40,7 +40,7 @@ const Layout = () => {
                             onClick={() => navigate("/knowledge")}
                         >
                             <Brain className="h-4 w-4" />
-                            <span className="hidden sm:inline">Knowledge Base</span>
+                            <span className="hidden sm:inline">知识库</span>
                         </Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -56,7 +56,7 @@ const Layout = () => {
                             <DropdownMenuContent className="w-56" align="end" forceMount>
                                 <DropdownMenuLabel className="font-normal">
                                     <div className="flex flex-col space-y-1">
-                                        <p className="text-sm font-medium leading-none">My Account</p>
+                                        <p className="text-sm font-medium leading-none">我的账户</p>
                                         <p className="text-xs leading-none text-muted-foreground">
                                             {userEmail}
                                         </p>
@@ -65,7 +65,7 @@ const Layout = () => {
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
                                     <LogOut className="mr-2 h-4 w-4" />
-                                    <span>Log out</span>
+                                    <span>退出登录</span>
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>

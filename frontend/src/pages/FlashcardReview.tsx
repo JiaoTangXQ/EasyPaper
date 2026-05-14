@@ -29,11 +29,11 @@ interface FlashcardData {
 }
 
 const QUALITY_OPTIONS = [
-    { value: 0, label: "Forgot", color: "bg-red-500 hover:bg-red-600", desc: "Complete blackout" },
-    { value: 1, label: "Hard", color: "bg-orange-500 hover:bg-orange-600", desc: "Wrong, but recognized" },
-    { value: 3, label: "Good", color: "bg-blue-500 hover:bg-blue-600", desc: "Correct with effort" },
-    { value: 4, label: "Easy", color: "bg-green-500 hover:bg-green-600", desc: "Correct, hesitated" },
-    { value: 5, label: "Perfect", color: "bg-emerald-500 hover:bg-emerald-600", desc: "Instant recall" },
+    { value: 0, label: "忘记", color: "bg-red-500 hover:bg-red-600", desc: "完全想不起来" },
+    { value: 1, label: "困难", color: "bg-orange-500 hover:bg-orange-600", desc: "答错但有印象" },
+    { value: 3, label: "一般", color: "bg-blue-500 hover:bg-blue-600", desc: "费力答对" },
+    { value: 4, label: "简单", color: "bg-green-500 hover:bg-green-600", desc: "稍有犹豫" },
+    { value: 5, label: "熟练", color: "bg-emerald-500 hover:bg-emerald-600", desc: "立即想起" },
 ];
 
 const FlashcardReview = () => {
@@ -53,7 +53,7 @@ const FlashcardReview = () => {
                 setSessionDone(true);
             }
         } catch {
-            toast.error("Failed to load flashcards.");
+            toast.error("加载闪卡失败。");
         } finally {
             setLoading(false);
         }
@@ -68,9 +68,7 @@ const FlashcardReview = () => {
         if (!card) return;
 
         try {
-            await api.post(`/api/knowledge/flashcards/${card.id}/review`, null, {
-                params: { quality },
-            });
+            await api.post(`/api/knowledge/flashcards/${card.id}/review`, { quality });
             setReviewed((prev) => prev + 1);
             setFlipped(false);
 
@@ -80,7 +78,7 @@ const FlashcardReview = () => {
                 setSessionDone(true);
             }
         } catch {
-            toast.error("Failed to submit review.");
+            toast.error("提交复习结果失败。");
         }
     };
 
@@ -99,17 +97,17 @@ const FlashcardReview = () => {
                     <CheckCircle className="h-12 w-12 text-green-600" />
                 </div>
                 <div className="text-center space-y-2">
-                    <h2 className="text-2xl font-bold">Session Complete!</h2>
+                    <h2 className="text-2xl font-bold">本轮复习完成</h2>
                     <p className="text-muted-foreground">
                         {reviewed > 0
-                            ? `You reviewed ${reviewed} card${reviewed > 1 ? "s" : ""}. Great work!`
-                            : "No cards due for review right now. Come back later!"}
+                            ? `已复习 ${reviewed} 张卡片。`
+                            : "当前没有到期闪卡，稍后再来。"}
                     </p>
                 </div>
                 <div className="flex gap-3">
                     <Button variant="outline" onClick={() => navigate("/knowledge")}>
                         <ArrowLeft className="mr-2 h-4 w-4" />
-                        Knowledge Base
+                        知识库
                     </Button>
                     <Button
                         onClick={() => {
@@ -121,7 +119,7 @@ const FlashcardReview = () => {
                         }}
                     >
                         <RotateCcw className="mr-2 h-4 w-4" />
-                        New Session
+                        新一轮
                     </Button>
                 </div>
             </div>
@@ -137,14 +135,14 @@ const FlashcardReview = () => {
             <div className="flex items-center justify-between">
                 <Button variant="ghost" size="sm" onClick={() => navigate("/knowledge")}>
                     <ArrowLeft className="mr-2 h-4 w-4" />
-                    Knowledge Base
+                    知识库
                 </Button>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
                     <GraduationCap className="h-4 w-4" />
                     <span>
                         {currentIndex + 1} / {cards.length}
                     </span>
-                    <span className="text-green-600">({reviewed} reviewed)</span>
+                    <span className="text-green-600">（已复习 {reviewed}）</span>
                 </div>
             </div>
 
@@ -172,7 +170,7 @@ const FlashcardReview = () => {
                                     <Brain className="h-6 w-6 text-primary" />
                                 </div>
                                 <p className="text-lg font-medium leading-relaxed">{currentCard.front}</p>
-                                <p className="mt-6 text-xs text-muted-foreground">Click to reveal answer</p>
+                                <p className="mt-6 text-xs text-muted-foreground">点击查看答案</p>
                             </>
                         ) : (
                             <>
@@ -200,7 +198,7 @@ const FlashcardReview = () => {
             {/* Quality Rating */}
             {flipped && (
                 <div className="space-y-3 animate-in slide-in-from-bottom-4 duration-300">
-                    <p className="text-center text-sm text-muted-foreground">How well did you recall?</p>
+                    <p className="text-center text-sm text-muted-foreground">这张卡记得怎么样？</p>
                     <div className="flex justify-center gap-2">
                         {QUALITY_OPTIONS.map((opt) => (
                             <Button

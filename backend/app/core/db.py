@@ -46,14 +46,15 @@ def _migrate_db() -> None:
     migrations = [
         ("task", "highlight", "BOOLEAN DEFAULT 0"),
         ("task", "highlight_stats", "TEXT"),
+        ("task", "highlight_status", "TEXT"),
+        ("task", "highlight_sentences", "TEXT"),
+        ("task", "result_dual_pdf_path", "TEXT"),
         ("task", "summary_json", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
             try:
-                existing = [
-                    row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")
-                ]
+                existing = [row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")]
                 if column not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                     conn.commit()

@@ -75,9 +75,7 @@ class PdfDownloader:
 
             file_bytes = response.content
             if len(file_bytes) > self.max_download_bytes:
-                raise ValueError(
-                    f"Downloaded file too large: {len(file_bytes) // (1024 * 1024)}MB"
-                )
+                raise ValueError(f"Downloaded file too large: {len(file_bytes) // (1024 * 1024)}MB")
 
             if not file_bytes.startswith(b"%PDF"):
                 raise ValueError("Downloaded file is not a valid PDF")
@@ -147,9 +145,7 @@ class PdfDownloader:
         if parsed.hostname in ACADEMIC_HOSTS:
             return  # trust known hosts; magic-byte check is the final guard
 
-        raise ValueError(
-            f"URL does not appear to serve a PDF (content-type: {content_type})"
-        )
+        raise ValueError(f"URL does not appear to serve a PDF (content-type: {content_type})")
 
     def _extract_filename(self, url: str, response: httpx.Response) -> str:
         cd = response.headers.get("content-disposition", "")

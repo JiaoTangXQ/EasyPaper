@@ -93,7 +93,7 @@ Open http://localhost in your browser.
 
 ### Option 2: Local Development
 
-**Prerequisites:** Python 3.10+, Node.js 18+, an OpenAI-compatible LLM API key
+**Prerequisites:** Python 3.11+, Node.js 18+ (Node 20 recommended), an OpenAI-compatible LLM API key
 
 **Backend:**
 

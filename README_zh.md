@@ -93,7 +93,7 @@ docker compose up --build
 
 ### 方式二：本地开发
 
-**环境要求：** Python 3.10+、Node.js 18+、一个 OpenAI 兼容的 LLM API Key
+**环境要求：** Python 3.11+、Node.js 18+（推荐 Node 20）、一个 OpenAI 兼容的 LLM API Key
 
 **启动后端：**
 

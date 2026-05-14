@@ -27,29 +27,29 @@ const renderLogin = () =>
     </MemoryRouter>,
   );
 
-describe("Login Page", () => {
-  it("renders login form", () => {
+describe("登录页", () => {
+  it("渲染登录表单", () => {
     renderLogin();
-    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /login/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("邮箱")).toBeInTheDocument();
+    expect(screen.getByLabelText("密码")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
   });
 
-  it("has link to register page", () => {
+  it("有注册页链接", () => {
     renderLogin();
-    expect(screen.getByText(/sign up/i)).toBeInTheDocument();
+    expect(screen.getByText("注册")).toBeInTheDocument();
   });
 
-  it("disables button when loading", async () => {
+  it("提交时禁用按钮", async () => {
     const { default: api } = await import("@/lib/api");
     (api.post as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise(() => {}), // never resolves
     );
 
     renderLogin();
-    const emailInput = screen.getByLabelText(/email/i);
-    const passwordInput = screen.getByLabelText(/password/i);
-    const button = screen.getByRole("button", { name: /login/i });
+    const emailInput = screen.getByLabelText("邮箱");
+    const passwordInput = screen.getByLabelText("密码");
+    const button = screen.getByRole("button", { name: "登录" });
 
     fireEvent.change(emailInput, { target: { value: "test@test.com" } });
     fireEvent.change(passwordInput, { target: { value: "secret" } });

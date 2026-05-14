@@ -14,6 +14,7 @@ from slowapi.util import get_remote_address
 from ..core.config import get_config
 from ..models.task import TaskStatus
 from ..models.user import User
+from ..services.background_tasks import create_tracked_task
 from ..services.document_processor import DocumentProcessor
 from ..services.paper_summarizer import PaperSummarizer
 from ..services.pdf_downloader import PdfDownloader
@@ -58,7 +59,9 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
                 detail=f"文件大小超过限制（最大 {cfg.processing.max_upload_mb}MB）",
             )
 
-        task = task_manager.create_task(file.filename or "document.pdf", user_id=user.id, mode=mode, highlight=highlight)
+        task = task_manager.create_task(
+            file.filename or "document.pdf", user_id=user.id, mode=mode, highlight=highlight
+        )
 
         # Save original file
         original_path = Path(task_manager.config.storage.temp_dir) / f"{task.task_id}_original.pdf"
@@ -72,7 +75,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
             async with _semaphore:
                 await processor.process(task.task_id, file_bytes, task.filename, mode=mode, highlight=highlight)
 
-        asyncio.create_task(_process_with_limit())
+        create_tracked_task(_process_with_limit())
 
         return {"task_id": task.task_id}
 
@@ -123,9 +126,11 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
 
         async def _process_with_limit() -> None:
             async with _semaphore:
-                await processor.process(task.task_id, file_bytes, task.filename, mode=body.mode, highlight=body.highlight)
+                await processor.process(
+                    task.task_id, file_bytes, task.filename, mode=body.mode, highlight=body.highlight
+                )
 
-        asyncio.create_task(_process_with_limit())
+        create_tracked_task(_process_with_limit())
 
         return {"task_id": task.task_id}
 
@@ -142,6 +147,8 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
                 "message": t.message,
                 "mode": t.mode,
                 "highlight": t.highlight,
+                "highlight_status": t.highlight_status,
+                "has_dual_pdf": bool(t.result_dual_pdf_path and Path(t.result_dual_pdf_path).exists()),
             }
             for t in tasks
         ]
@@ -160,6 +167,11 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
         }
         if task.highlight_stats:
             result["highlight_stats"] = json.loads(task.highlight_stats)
+        if task.highlight_status:
+            result["highlight_status"] = task.highlight_status
+        if task.highlight_sentences:
+            result["highlight_sentences"] = json.loads(task.highlight_sentences)
+        result["has_dual_pdf"] = bool(task.result_dual_pdf_path and Path(task.result_dual_pdf_path).exists())
         return result
 
     @router.get("/result/{task_id}/preview", response_class=HTMLResponse)
@@ -174,17 +186,26 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
         return task.result_preview_html
 
     @router.get("/result/{task_id}/pdf")
-    async def download_pdf(task_id: str, user: User = Depends(get_current_user)):
+    async def download_pdf(task_id: str, format: str = "mono", user: User = Depends(get_current_user)):
         task = task_manager.get_task(task_id)
         if not task or task.status != TaskStatus.COMPLETED:
             raise HTTPException(status_code=404, detail="结果尚未生成")
         if task.user_id != user.id:
             raise HTTPException(status_code=403, detail="无权访问此任务")
 
-        if not task.result_pdf_path or not Path(task.result_pdf_path).exists():
+        if format not in {"mono", "dual"}:
+            raise HTTPException(status_code=400, detail="format must be 'mono' or 'dual'")
+
+        result_path = task.result_pdf_path
+        filename = f"simplified_{task.filename}"
+        if format == "dual":
+            result_path = task.result_dual_pdf_path
+            filename = f"dual_{task.filename}"
+
+        if not result_path or not Path(result_path).exists():
             raise HTTPException(status_code=404, detail="暂无PDF内容或文件已过期")
 
-        return FileResponse(task.result_pdf_path, media_type="application/pdf", filename=f"simplified_{task.filename}")
+        return FileResponse(result_path, media_type="application/pdf", filename=filename)
 
     @router.delete("/tasks/{task_id}")
     async def delete_task(task_id: str, user: User = Depends(get_current_user)) -> dict[str, str]:

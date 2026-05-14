@@ -165,9 +165,7 @@ class KnowledgeExtractor:
             self._save_paper(paper)
             raise
 
-    async def _run_pipeline(
-        self, pdf_bytes: bytes, paper_id: str, user_id: int
-    ) -> dict:
+    async def _run_pipeline(self, pdf_bytes: bytes, paper_id: str, user_id: int) -> dict:
         """执行提取流水线的各阶段。"""
         # 1. 提取 PDF 全文
         pages_text = self._extract_text(pdf_bytes)
@@ -192,9 +190,7 @@ class KnowledgeExtractor:
 
         async def extract_chunk(chunk_text: str, sec_id: str):
             async with semaphore:
-                return await self._llm_call(
-                    ENTITY_RELATIONSHIP_PROMPT, chunk_text, "entities"
-                )
+                return await self._llm_call(ENTITY_RELATIONSHIP_PROMPT, chunk_text, "entities")
 
         tasks = [
             extract_chunk(chunk, sec.get("id", f"sec_{i}"))
@@ -204,9 +200,7 @@ class KnowledgeExtractor:
 
         if not tasks:
             # 如果没有足够的 section 分块，对全文做一次提取
-            result = await self._llm_call(
-                ENTITY_RELATIONSHIP_PROMPT, full_text[:6000], "entities"
-            )
+            result = await self._llm_call(ENTITY_RELATIONSHIP_PROMPT, full_text[:6000], "entities")
             all_entities.extend(result.get("entities", []))
             all_relationships.extend(result.get("relationships", []))
         else:
@@ -233,15 +227,10 @@ class KnowledgeExtractor:
             rel["target_entity_id"] = entity_map.get(tgt, "")
 
         # 过滤掉无效关系
-        relationships = [
-            r for r in all_relationships
-            if r.get("source_entity_id") and r.get("target_entity_id")
-        ]
+        relationships = [r for r in all_relationships if r.get("source_entity_id") and r.get("target_entity_id")]
 
         # 5. 提取 findings + methods + datasets
-        findings_data = await self._llm_call(
-            FINDINGS_PROMPT, full_text[:8000], "findings"
-        )
+        findings_data = await self._llm_call(FINDINGS_PROMPT, full_text[:8000], "findings")
         findings = findings_data.get("findings", [])
         for _i, f in enumerate(findings):
             f["id"] = _gen_id("find")
@@ -253,9 +242,7 @@ class KnowledgeExtractor:
             {"entities": entities[:15], "findings": findings[:10]},
             ensure_ascii=False,
         )
-        flashcards_data = await self._llm_call(
-            FLASHCARD_PROMPT, flashcard_context, "flashcards"
-        )
+        flashcards_data = await self._llm_call(FLASHCARD_PROMPT, flashcard_context, "flashcards")
         flashcards = flashcards_data.get("flashcards", [])
         for fc in flashcards:
             fc["id"] = _gen_id("fc")
@@ -309,9 +296,7 @@ class KnowledgeExtractor:
     # LLM 调用（带重试）
     # ------------------------------------------------------------------
 
-    async def _llm_call(
-        self, system_prompt: str, user_content: str, label: str
-    ) -> dict:
+    async def _llm_call(self, system_prompt: str, user_content: str, label: str) -> dict:
         """单次 LLM API 调用，带重试和 JSON 解析。"""
         max_retries = 3
         base_delay = 2
@@ -323,7 +308,7 @@ class KnowledgeExtractor:
                 if attempt == max_retries - 1:
                     logger.error("LLM call [%s] failed after %d retries: %s", label, max_retries, exc)
                     return {}
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning("LLM call [%s] error: %s, retrying in %ds...", label, exc, delay)
                 await asyncio.sleep(delay)
         return {}
@@ -344,9 +329,7 @@ class KnowledgeExtractor:
             "Content-Type": "application/json",
         }
 
-        response = await self._client.post(
-            "/chat/completions", json=payload, headers=headers
-        )
+        response = await self._client.post("/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
@@ -438,44 +421,50 @@ class KnowledgeExtractor:
         """将实体、关系、闪卡存入索引表。"""
         with Session(engine) as session:
             for ent in entities:
-                session.merge(KnowledgeEntity(
-                    id=ent["id"],
-                    paper_id=paper_id,
-                    user_id=user_id,
-                    name=ent.get("name", ""),
-                    type=ent.get("type", "concept"),
-                    aliases_json=json.dumps(ent.get("aliases", []), ensure_ascii=False),
-                    definition=ent.get("definition"),
-                    importance=ent.get("importance", 0.5),
-                ))
+                session.merge(
+                    KnowledgeEntity(
+                        id=ent["id"],
+                        paper_id=paper_id,
+                        user_id=user_id,
+                        name=ent.get("name", ""),
+                        type=ent.get("type", "concept"),
+                        aliases_json=json.dumps(ent.get("aliases", []), ensure_ascii=False),
+                        definition=ent.get("definition"),
+                        importance=ent.get("importance", 0.5),
+                    )
+                )
 
             for rel in relationships:
-                session.merge(KnowledgeRelationship(
-                    id=rel["id"],
-                    paper_id=paper_id,
-                    user_id=user_id,
-                    source_entity_id=rel["source_entity_id"],
-                    target_entity_id=rel["target_entity_id"],
-                    type=rel.get("type", "uses"),
-                    description=rel.get("description"),
-                    confidence=rel.get("confidence", 0.5),
-                ))
+                session.merge(
+                    KnowledgeRelationship(
+                        id=rel["id"],
+                        paper_id=paper_id,
+                        user_id=user_id,
+                        source_entity_id=rel["source_entity_id"],
+                        target_entity_id=rel["target_entity_id"],
+                        type=rel.get("type", "uses"),
+                        description=rel.get("description"),
+                        confidence=rel.get("confidence", 0.5),
+                    )
+                )
 
             now = datetime.utcnow()
             for fc in flashcards:
-                session.merge(Flashcard(
-                    id=fc["id"],
-                    paper_id=paper_id,
-                    user_id=user_id,
-                    front=fc.get("front", ""),
-                    back=fc.get("back", ""),
-                    tags_json=json.dumps(fc.get("tags", []), ensure_ascii=False),
-                    difficulty=fc.get("difficulty", 3),
-                    interval_days=1.0,
-                    ease_factor=2.5,
-                    repetitions=0,
-                    next_review=now,
-                ))
+                session.merge(
+                    Flashcard(
+                        id=fc["id"],
+                        paper_id=paper_id,
+                        user_id=user_id,
+                        front=fc.get("front", ""),
+                        back=fc.get("back", ""),
+                        tags_json=json.dumps(fc.get("tags", []), ensure_ascii=False),
+                        difficulty=fc.get("difficulty", 3),
+                        interval_days=1.0,
+                        ease_factor=2.5,
+                        repetitions=0,
+                        next_review=now,
+                    )
+                )
 
             session.commit()
 

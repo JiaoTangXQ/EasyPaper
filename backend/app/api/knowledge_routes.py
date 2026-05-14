@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import logging
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
@@ -24,10 +26,70 @@ from ..models.knowledge import (
 )
 from ..models.task import Task, TaskStatus
 from ..models.user import User
+from ..services.background_tasks import create_tracked_task
 from ..services.knowledge_extractor import KnowledgeExtractor
 from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
+
+
+class FlashcardReviewRequest(BaseModel):
+    quality: int
+
+
+class CreateFlashcardRequest(BaseModel):
+    paper_id: str
+    front: str
+    back: str
+    tags: str | list[str] = ""
+    difficulty: int = 3
+
+
+class CreateAnnotationRequest(BaseModel):
+    type: str
+    content: str
+    target_type: str = "paper"
+    target_id: str = ""
+    tags: str | list[str] = ""
+
+
+def _normalize_tags(tags: str | list[str]) -> list[str]:
+    if isinstance(tags, str):
+        raw_tags = tags.split(",")
+    else:
+        raw_tags = tags
+    return [tag.strip() for tag in raw_tags if tag.strip()]
+
+
+def _ensure_extracting_paper(
+    session: Session,
+    task: Task,
+    user_id: int,
+    extraction_model: str,
+) -> PaperKnowledge:
+    existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task.task_id)).first()
+    if existing:
+        if existing.extraction_status != "completed":
+            existing.extraction_status = "extracting"
+            existing.extraction_error = None
+            existing.extraction_model = extraction_model
+            existing.updated_at = datetime.utcnow()
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+        return existing
+
+    paper = PaperKnowledge(
+        id=f"pk_{uuid.uuid4().hex[:12]}",
+        task_id=task.task_id,
+        user_id=user_id,
+        extraction_status="extracting",
+        extraction_model=extraction_model,
+    )
+    session.add(paper)
+    session.commit()
+    session.refresh(paper)
+    return paper
 
 
 def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
@@ -57,9 +119,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
 
         # 检查是否已提取
         with Session(engine) as session:
-            existing = session.exec(
-                select(PaperKnowledge).where(PaperKnowledge.task_id == task_id)
-            ).first()
+            existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task_id)).first()
         if existing and existing.extraction_status == "completed":
             return {"paper_id": existing.id, "status": "already_completed"}
 
@@ -68,7 +128,14 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
             raise HTTPException(status_code=404, detail="原始 PDF 文件不存在或已过期")
 
         pdf_bytes = Path(task.original_pdf_path).read_bytes()
-        paper_id = existing.id if existing else None
+        with Session(engine) as session:
+            paper = _ensure_extracting_paper(
+                session=session,
+                task=task,
+                user_id=user.id,
+                extraction_model=extractor.model,
+            )
+            paper_id = paper.id
 
         # 异步执行提取
         async def _do_extract():
@@ -77,9 +144,9 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
             except Exception:
                 logger.exception("Knowledge extraction failed for task %s", task_id)
 
-        asyncio.create_task(_do_extract())
+        create_tracked_task(_do_extract())
 
-        return {"paper_id": paper_id or "pending", "status": "extracting"}
+        return {"paper_id": paper_id, "status": "extracting"}
 
     @router.get("/extract/status/{paper_id}")
     async def extraction_status(
@@ -178,9 +245,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     ) -> dict[str, Any]:
         """获取用户的知识图谱（所有实体和关系）。"""
         with Session(engine) as session:
-            entities = session.exec(
-                select(KnowledgeEntity).where(KnowledgeEntity.user_id == user.id)
-            ).all()
+            entities = session.exec(select(KnowledgeEntity).where(KnowledgeEntity.user_id == user.id)).all()
             relationships = session.exec(
                 select(KnowledgeRelationship).where(KnowledgeRelationship.user_id == user.id)
             ).all()
@@ -242,9 +307,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     ) -> list[dict[str, Any]]:
         """列出用户的所有闪卡。"""
         with Session(engine) as session:
-            cards = session.exec(
-                select(Flashcard).where(Flashcard.user_id == user.id)
-            ).all()
+            cards = session.exec(select(Flashcard).where(Flashcard.user_id == user.id)).all()
         return [_flashcard_to_dict(c) for c in cards]
 
     @router.get("/flashcards/due")
@@ -268,10 +331,11 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     @router.post("/flashcards/{card_id}/review")
     async def review_flashcard(
         card_id: str,
-        quality: int,
+        payload: FlashcardReviewRequest,
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
         """提交闪卡复习结果 (quality: 0-5)。"""
+        quality = payload.quality
         if not 0 <= quality <= 5:
             raise HTTPException(status_code=400, detail="quality must be 0-5")
 
@@ -293,11 +357,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
 
     @router.post("/flashcards")
     async def create_flashcard(
-        paper_id: str,
-        front: str,
-        back: str,
-        tags: str = "",
-        difficulty: int = 3,
+        payload: CreateFlashcardRequest,
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
         """手动创建闪卡。"""
@@ -305,18 +365,18 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         from datetime import datetime
 
         with Session(engine) as session:
-            paper = session.get(PaperKnowledge, paper_id)
+            paper = session.get(PaperKnowledge, payload.paper_id)
             if not paper or paper.user_id != user.id:
                 raise HTTPException(status_code=404, detail="论文不存在")
 
             card = Flashcard(
                 id=f"fc_{uuid.uuid4().hex[:12]}",
-                paper_id=paper_id,
+                paper_id=payload.paper_id,
                 user_id=user.id,
-                front=front,
-                back=back,
-                tags_json=json.dumps(tags.split(",") if tags else []),
-                difficulty=difficulty,
+                front=payload.front,
+                back=payload.back,
+                tags_json=json.dumps(_normalize_tags(payload.tags), ensure_ascii=False),
+                difficulty=payload.difficulty,
                 next_review=datetime.utcnow(),
             )
             session.add(card)
@@ -372,11 +432,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     @router.post("/papers/{paper_id}/annotations")
     async def create_annotation(
         paper_id: str,
-        type: str,
-        content: str,
-        target_type: str = "paper",
-        target_id: str = "",
-        tags: str = "",
+        payload: CreateAnnotationRequest,
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
         import uuid
@@ -391,11 +447,11 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
                 id=f"ann_{uuid.uuid4().hex[:12]}",
                 paper_id=paper_id,
                 user_id=user.id,
-                type=type,
-                content=content,
-                target_type=target_type,
-                target_id=target_id,
-                tags_json=json.dumps(tags.split(",") if tags else []),
+                type=payload.type,
+                content=payload.content,
+                target_type=payload.target_type,
+                target_id=payload.target_id,
+                tags_json=json.dumps(_normalize_tags(payload.tags), ensure_ascii=False),
                 created_at=datetime.utcnow(),
             )
             session.add(ann)

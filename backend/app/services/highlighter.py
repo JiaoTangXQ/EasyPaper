@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from itertools import groupby
 
 import fitz
 import httpx
@@ -16,10 +17,32 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class HighlightSentence:
-    text: str
+class HighlightSelection:
+    sentence_id: str
     category: str  # "core_conclusion" | "method_innovation" | "key_data"
+
+
+@dataclass
+class HighlightCandidate:
+    sentence_id: str
+    text: str
     page_index: int
+    quads: list[fitz.Quad]
+
+    def to_metadata(self, category: str) -> dict:
+        return {
+            "sentence_id": self.sentence_id,
+            "page_index": self.page_index,
+            "text": self.text,
+            "category": category,
+            "rects": [[quad.rect.x0, quad.rect.y0, quad.rect.x1, quad.rect.y1] for quad in self.quads],
+        }
+
+
+@dataclass
+class _CharBox:
+    char: str
+    rect: fitz.Rect | None
 
 
 @dataclass
@@ -49,26 +72,27 @@ HIGHLIGHT_COLORS = {
 
 HIGHLIGHT_SYSTEM_PROMPT = (
     "You are an expert academic paper analyst. Your task is to identify key sentences "
-    "from a page of an academic paper.\n\n"
+    "from academic paper sentence candidates.\n\n"
     "Classify important sentences into exactly 3 categories:\n"
     "1. core_conclusion - Core conclusions or main findings of the research\n"
     "2. method_innovation - Methodological innovations, novel approaches, or technical contributions\n"
     "3. key_data - Key data points, experimental results, metrics, or quantitative findings\n\n"
     "RULES:\n"
-    "- Return 3-8 sentences per page (fewer for short pages)\n"
-    "- Each sentence must be an EXACT substring from the provided text\n"
-    "- Do not modify, paraphrase, or truncate sentences\n"
+    "- Return 3-8 sentence IDs per page when enough important sentences exist\n"
+    "- Use only sentence_id values from the provided candidates\n"
     "- Focus on the most important sentences; skip boilerplate, references, and headers\n"
-    "- If a page has no notable sentences (e.g., references, table of contents), return an empty list\n"
-    "- For translated (Chinese) text, the sentences should match the Chinese text exactly\n\n"
+    "- If there are no notable sentences, return an empty list\n\n"
     "Respond ONLY with a JSON object:\n"
     "{\n"
-    '  "sentences": [\n'
-    '    {"text": "exact sentence from the page", "category": "core_conclusion"},\n'
-    '    {"text": "another exact sentence", "category": "method_innovation"}\n'
+    '  "highlights": [\n'
+    '    {"sentence_id": "p1_s3", "category": "core_conclusion"},\n'
+    '    {"sentence_id": "p1_s7", "category": "method_innovation"}\n'
     "  ]\n"
     "}\n"
 )
+
+SENTENCE_END_CHARS = frozenset("。！？!?；;")
+MIN_CANDIDATE_CHARS = 12
 
 
 class HighlightService:
@@ -88,11 +112,12 @@ class HighlightService:
         )
 
     async def highlight_pdf(self, pdf_bytes: bytes) -> tuple[bytes, HighlightStats]:
-        """主入口：提取文本 → LLM 分类 → 添加注释 → 返回高亮后的 PDF"""
+        """主入口：提取候选句 → LLM 分类 sentence_id → 添加注释 → 返回高亮后的 PDF"""
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
-            page_sentences = await self._extract_and_classify_pages(doc)
-            stats = self._apply_highlights(doc, page_sentences)
+            candidates = self._extract_sentence_candidates(doc)
+            selections = await self._classify_candidates(candidates)
+            stats, _applied = self._apply_highlights(doc, candidates, selections)
             result_bytes = doc.tobytes()
             return result_bytes, stats
         except Exception as exc:
@@ -101,81 +126,254 @@ class HighlightService:
         finally:
             doc.close()
 
-    async def _extract_and_classify_pages(
-        self, doc: fitz.Document
-    ) -> list[list[HighlightSentence]]:
-        """提取每页文本并用 LLM 并发分类"""
-        page_texts: list[tuple[int, str]] = []
-        for i in range(doc.page_count):
-            page = doc.load_page(i)
-            text = page.get_text("text")
-            if text.strip() and len(text.strip()) >= 50:
-                page_texts.append((i, text))
+    async def highlight_pdf_with_metadata(self, pdf_bytes: bytes) -> tuple[bytes, HighlightStats, list[dict]]:
+        """和 highlight_pdf 相同，但额外返回前端可展示和跳页的句子元数据。"""
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            candidates = self._extract_sentence_candidates(doc)
+            selections = await self._classify_candidates(candidates)
+            stats, applied = self._apply_highlights(doc, candidates, selections)
+            result_bytes = doc.tobytes()
+            return result_bytes, stats, applied
+        except Exception as exc:
+            logger.error("Highlight processing failed: %s", exc)
+            return pdf_bytes, HighlightStats(), []
+        finally:
+            doc.close()
 
-        results: list[list[HighlightSentence]] = [[] for _ in range(doc.page_count)]
+    def _extract_sentence_candidates(self, doc: fitz.Document) -> list[HighlightCandidate]:
+        """从 PDF 字符 bbox 生成稳定句子 ID 和高亮坐标。"""
+        candidates: list[HighlightCandidate] = []
+
+        for page_index in range(doc.page_count):
+            page = doc.load_page(page_index)
+            chars = self._extract_page_chars(page)
+            sentence_chars: list[_CharBox] = []
+            page_sentence_index = 1
+
+            for i, char_box in enumerate(chars):
+                sentence_chars.append(char_box)
+                prev_char = chars[i - 1].char if i > 0 else ""
+                next_char = chars[i + 1].char if i + 1 < len(chars) else ""
+                if self._is_sentence_end(char_box.char, prev_char, next_char):
+                    candidate = self._build_candidate(page_index, page_sentence_index, sentence_chars)
+                    if candidate:
+                        candidates.append(candidate)
+                        page_sentence_index += 1
+                    sentence_chars = []
+
+            candidate = self._build_candidate(page_index, page_sentence_index, sentence_chars)
+            if candidate:
+                candidates.append(candidate)
+
+        return candidates
+
+    def _extract_page_chars(self, page: fitz.Page) -> list[_CharBox]:
+        raw = page.get_text("rawdict")
+        chars: list[_CharBox] = []
+
+        for block in raw.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                line_chars = self._extract_line_chars(line)
+                if not line_chars:
+                    continue
+                if chars and self._needs_inserted_space(chars[-1].char, line_chars[0].char):
+                    chars.append(_CharBox(" ", None))
+                chars.extend(line_chars)
+
+        return chars
+
+    def _extract_line_chars(self, line: dict) -> list[_CharBox]:
+        line_chars: list[_CharBox] = []
+        for span in line.get("spans", []):
+            for char in span.get("chars", []):
+                value = char.get("c", "")
+                if not value:
+                    continue
+                bbox = char.get("bbox")
+                rect = fitz.Rect(bbox) if bbox else None
+                line_chars.append(_CharBox(value, rect))
+        return line_chars
+
+    def _needs_inserted_space(self, previous: str, current: str) -> bool:
+        if not previous or not current:
+            return False
+        if previous.isspace() or current.isspace():
+            return False
+        if previous in "-/" or previous in SENTENCE_END_CHARS:
+            return False
+        return previous.isascii() and current.isascii() and previous.isalnum() and current.isalnum()
+
+    def _is_sentence_end(self, char: str, previous: str, current: str) -> bool:
+        if char in SENTENCE_END_CHARS:
+            return True
+        if char != ".":
+            return False
+        if previous.isdigit() and current.isdigit():
+            return False
+        return True
+
+    def _build_candidate(
+        self,
+        page_index: int,
+        sentence_index: int,
+        sentence_chars: list[_CharBox],
+    ) -> HighlightCandidate | None:
+        text = self._clean_sentence_text("".join(char_box.char for char_box in sentence_chars))
+        if len(text) < MIN_CANDIDATE_CHARS:
+            return None
+
+        quads = self._chars_to_quads(sentence_chars)
+        if not quads:
+            return None
+
+        return HighlightCandidate(
+            sentence_id=f"p{page_index + 1}_s{sentence_index}",
+            text=text,
+            page_index=page_index,
+            quads=quads,
+        )
+
+    def _clean_sentence_text(self, text: str) -> str:
+        return " ".join(text.split())
+
+    def _chars_to_quads(self, sentence_chars: list[_CharBox]) -> list[fitz.Quad]:
+        rects = [
+            char_box.rect for char_box in sentence_chars if char_box.rect is not None and not char_box.char.isspace()
+        ]
+        if not rects:
+            return []
+
+        rects.sort(key=lambda rect: (round(rect.y0, 1), rect.x0))
+        line_groups: list[list[fitz.Rect]] = []
+        for _line_key, group in groupby(rects, key=lambda rect: round((rect.y0 + rect.y1) / 2, 0)):
+            line_groups.append(list(group))
+
+        quads: list[fitz.Quad] = []
+        for group in line_groups:
+            group.sort(key=lambda rect: rect.x0)
+            union = fitz.Rect(group[0])
+            for rect in group[1:]:
+                union |= rect
+            quads.append(fitz.Quad(union.tl, union.tr, union.bl, union.br))
+
+        return quads
+
+    async def _classify_candidates(self, candidates: list[HighlightCandidate]) -> list[HighlightSelection]:
+        if not candidates:
+            return []
+
+        chunks = self._chunk_candidates(candidates)
         semaphore = asyncio.Semaphore(self.max_concurrent_pages)
 
-        async def classify_with_limit(page_index: int, text: str):
+        async def classify_with_limit(chunk: list[HighlightCandidate]):
             async with semaphore:
-                return page_index, await self._classify_page(text, page_index)
+                return await self._classify_candidate_chunk(chunk)
 
-        tasks = [classify_with_limit(i, text) for i, text in page_texts]
+        selections: list[HighlightSelection] = []
+        tasks = [classify_with_limit(chunk) for chunk in chunks]
         for coro in asyncio.as_completed(tasks):
-            page_index, sentences = await coro
-            results[page_index] = sentences
+            selections.extend(await coro)
+        return selections
 
-        return results
+    def _chunk_candidates(
+        self,
+        candidates: list[HighlightCandidate],
+        max_chars: int = 5000,
+        max_items: int = 60,
+    ) -> list[list[HighlightCandidate]]:
+        chunks: list[list[HighlightCandidate]] = []
+        current: list[HighlightCandidate] = []
+        current_chars = 0
 
-    async def _classify_page(
-        self, page_text: str, page_index: int
-    ) -> list[HighlightSentence]:
-        """单页分类，带重试"""
-        truncated = page_text[:4000]
+        for candidate in candidates:
+            candidate_chars = len(candidate.text)
+            if current and (current_chars + candidate_chars > max_chars or len(current) >= max_items):
+                chunks.append(current)
+                current = []
+                current_chars = 0
+            current.append(candidate)
+            current_chars += candidate_chars
 
+        if current:
+            chunks.append(current)
+        return chunks
+
+    async def _classify_candidate_chunk(self, candidates: list[HighlightCandidate]) -> list[HighlightSelection]:
         max_retries = 3
         base_delay = 2
         for attempt in range(max_retries):
             try:
-                return await self._do_classify(truncated, page_index)
+                return await self._do_classify_candidates(candidates)
             except Exception as exc:
                 if attempt == max_retries - 1:
-                    logger.error("Page %d classification failed: %s", page_index, exc)
+                    logger.error("Candidate classification failed: %s", exc)
                     return []
                 delay = base_delay * (2**attempt)
-                logger.warning(
-                    "Page %d error: %s, retrying in %ds...", page_index, exc, delay
-                )
+                logger.warning("Candidate classification error: %s, retrying in %ds...", exc, delay)
                 await asyncio.sleep(delay)
         return []
 
-    async def _do_classify(
-        self, page_text: str, page_index: int
-    ) -> list[HighlightSentence]:
-        """LLM API 调用 + JSON 解析"""
+    async def _do_classify_candidates(self, candidates: list[HighlightCandidate]) -> list[HighlightSelection]:
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": HIGHLIGHT_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": f"Page {page_index + 1} text:\n\n{page_text}",
+                    "content": "Sentence candidates:\n\n"
+                    + json.dumps(
+                        [
+                            {
+                                "sentence_id": candidate.sentence_id,
+                                "page": candidate.page_index + 1,
+                                "text": candidate.text[:800],
+                            }
+                            for candidate in candidates
+                        ],
+                        ensure_ascii=False,
+                    ),
                 },
             ],
             "temperature": 0.1,
             "max_tokens": 2048,
+            "response_format": {"type": "json_object"},
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        response = await self._client.post(
-            "/chat/completions", json=payload, headers=headers
-        )
-        response.raise_for_status()
+        response = await self._post_chat_completion(payload, headers)
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
+        parsed = self._parse_json_object(content)
 
+        selections = []
+        for item in parsed.get("highlights", []):
+            sentence_id = item.get("sentence_id", "").strip()
+            category = item.get("category", "")
+            if sentence_id and category in HIGHLIGHT_COLORS:
+                selections.append(HighlightSelection(sentence_id=sentence_id, category=category))
+        return selections
+
+    async def _post_chat_completion(self, payload: dict, headers: dict) -> httpx.Response:
+        try:
+            response = await self._client.post("/chat/completions", json=payload, headers=headers)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400 and "response_format" in payload:
+                fallback_payload = dict(payload)
+                fallback_payload.pop("response_format", None)
+                response = await self._client.post("/chat/completions", json=fallback_payload, headers=headers)
+                response.raise_for_status()
+                return response
+            raise
+
+    def _parse_json_object(self, content: str) -> dict:
         # Strip markdown code fences
         if content.startswith("```"):
             lines = content.split("\n")
@@ -194,56 +392,51 @@ class HighlightService:
             else:
                 raise
 
-        sentences = []
-        for item in parsed.get("sentences", []):
-            text = item.get("text", "").strip()
-            category = item.get("category", "")
-            if text and category in HIGHLIGHT_COLORS:
-                sentences.append(
-                    HighlightSentence(
-                        text=text, category=category, page_index=page_index
-                    )
-                )
-        return sentences
+        return parsed
 
     def _apply_highlights(
         self,
         doc: fitz.Document,
-        page_sentences: list[list[HighlightSentence]],
-    ) -> HighlightStats:
+        candidates: list[HighlightCandidate],
+        selections: list[HighlightSelection],
+    ) -> tuple[HighlightStats, list[dict]]:
         """在 PDF 中添加高亮注释"""
         stats = HighlightStats()
+        applied: list[dict] = []
+        candidate_map = {candidate.sentence_id: candidate for candidate in candidates}
+        seen_ids: set[str] = set()
 
-        for page_index, sentences in enumerate(page_sentences):
-            if not sentences:
+        for selection in selections:
+            if selection.sentence_id in seen_ids:
                 continue
-            page = doc.load_page(page_index)
-            for sent in sentences:
-                quads = page.search_for(sent.text, quads=True)
-                if quads:
-                    annot = page.add_highlight_annot(quads)
-                    color = HIGHLIGHT_COLORS[sent.category]
-                    annot.set_colors(stroke=color)
-                    annot.set_opacity(0.4)
-                    annot.set_info(title=sent.category)
-                    annot.update()
+            seen_ids.add(selection.sentence_id)
+            candidate = candidate_map.get(selection.sentence_id)
+            if not candidate or not candidate.quads or selection.category not in HIGHLIGHT_COLORS:
+                stats.failed_matches += 1
+                logger.debug("Could not find sentence candidate: %s", selection.sentence_id)
+                continue
 
-                    if sent.category == "core_conclusion":
-                        stats.core_conclusions += 1
-                    elif sent.category == "method_innovation":
-                        stats.method_innovations += 1
-                    elif sent.category == "key_data":
-                        stats.key_data += 1
-                    stats.total += 1
-                else:
-                    stats.failed_matches += 1
-                    logger.debug(
-                        "Could not find sentence in page %d: %s...",
-                        page_index,
-                        sent.text[:60],
-                    )
+            page = doc.load_page(candidate.page_index)
+            annot = page.add_highlight_annot(candidate.quads)
+            color = HIGHLIGHT_COLORS[selection.category]
+            annot.set_colors(stroke=color)
+            annot.set_opacity(0.4)
+            annot.set_info(title=selection.category, content=candidate.text)
+            annot.update()
 
-        return stats
+            self._increment_stats(stats, selection.category)
+            applied.append(candidate.to_metadata(selection.category))
+
+        return stats, applied
+
+    def _increment_stats(self, stats: HighlightStats, category: str) -> None:
+        if category == "core_conclusion":
+            stats.core_conclusions += 1
+        elif category == "method_innovation":
+            stats.method_innovations += 1
+        elif category == "key_data":
+            stats.key_data += 1
+        stats.total += 1
 
     async def close(self) -> None:
         await self._client.aclose()

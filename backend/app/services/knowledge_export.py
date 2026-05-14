@@ -69,27 +69,31 @@ class KnowledgeExporter:
                 ent_id = ent.get("id", "")
                 name = ent.get("name", "")
                 entity_names[ent_id] = name
-                ent_writer.writerow([
-                    ent_id,
-                    name,
-                    ent.get("type", ""),
-                    ent.get("definition", ""),
-                    ent.get("importance", 0.5),
-                    title,
-                ])
+                ent_writer.writerow(
+                    [
+                        ent_id,
+                        name,
+                        ent.get("type", ""),
+                        ent.get("definition", ""),
+                        ent.get("importance", 0.5),
+                        title,
+                    ]
+                )
 
             for rel in paper.get("relationships", []):
                 src_id = rel.get("source_entity_id", "")
                 tgt_id = rel.get("target_entity_id", "")
-                rel_writer.writerow([
-                    rel.get("id", ""),
-                    entity_names.get(src_id, rel.get("source", src_id)),
-                    entity_names.get(tgt_id, rel.get("target", tgt_id)),
-                    rel.get("type", ""),
-                    rel.get("description", ""),
-                    rel.get("confidence", 0.5),
-                    title,
-                ])
+                rel_writer.writerow(
+                    [
+                        rel.get("id", ""),
+                        entity_names.get(src_id, rel.get("source", src_id)),
+                        entity_names.get(tgt_id, rel.get("target", tgt_id)),
+                        rel.get("type", ""),
+                        rel.get("description", ""),
+                        rel.get("confidence", 0.5),
+                        title,
+                    ]
+                )
 
         return ent_buffer.getvalue().encode("utf-8"), rel_buffer.getvalue().encode("utf-8")
 

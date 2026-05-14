@@ -76,6 +76,11 @@ class TaskManager:
                 file_path.write_bytes(result.pdf_bytes)
                 task.result_pdf_path = str(file_path)
 
+            if result.dual_pdf_bytes:
+                dual_file_path = Path(self.config.storage.temp_dir) / f"{task_id}_dual.pdf"
+                dual_file_path.write_bytes(result.dual_pdf_bytes)
+                task.result_dual_pdf_path = str(dual_file_path)
+
             task.result_preview_html = result.preview_html
             task.status = TaskStatus.COMPLETED
             task.percent = 100
@@ -85,11 +90,22 @@ class TaskManager:
             session.commit()
 
     def set_highlight_stats(self, task_id: str, stats_json: str) -> None:
+        self.set_highlight_result(task_id, stats_json=stats_json, status=None, sentences_json=None)
+
+    def set_highlight_result(
+        self,
+        task_id: str,
+        stats_json: str,
+        status: str | None,
+        sentences_json: str | None,
+    ) -> None:
         with Session(engine) as session:
             task = session.get(Task, task_id)
             if not task:
                 return
             task.highlight_stats = stats_json
+            task.highlight_status = status
+            task.highlight_sentences = sentences_json
             session.add(task)
             session.commit()
 
@@ -123,6 +139,11 @@ class TaskManager:
                     Path(task.result_pdf_path).unlink(missing_ok=True)
                 except Exception:
                     pass
+            if task.result_dual_pdf_path:
+                try:
+                    Path(task.result_dual_pdf_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
             if task.original_pdf_path:
                 try:
                     Path(task.original_pdf_path).unlink(missing_ok=True)
@@ -146,6 +167,11 @@ class TaskManager:
                 if task.result_pdf_path:
                     try:
                         Path(task.result_pdf_path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                if task.result_dual_pdf_path:
+                    try:
+                        Path(task.result_dual_pdf_path).unlink(missing_ok=True)
                     except Exception:
                         pass
                 # Delete original PDF if exists

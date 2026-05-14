@@ -64,17 +64,19 @@ const KnowledgeBase = () => {
     }, []);
 
     useEffect(() => {
-        fetchPapers();
-        fetchDueCount();
+        const load = async () => {
+            await Promise.all([fetchPapers(), fetchDueCount()]);
+        };
+        void load();
     }, [fetchPapers, fetchDueCount]);
 
     const handleDelete = async (paperId: string) => {
         try {
             await api.delete(`/api/knowledge/papers/${paperId}`);
             setPapers((prev) => prev.filter((p) => p.id !== paperId));
-            toast.success("Paper removed from knowledge base.");
+            toast.success("论文已从知识库删除。");
         } catch {
-            toast.error("Failed to delete paper.");
+            toast.error("删除论文失败。");
         }
     };
 
@@ -116,9 +118,9 @@ const KnowledgeBase = () => {
             link.click();
             link.parentNode?.removeChild(link);
             URL.revokeObjectURL(link.href);
-            toast.success(`Exported as ${format.toUpperCase()}`);
+            toast.success(`已导出为 ${format.toUpperCase()}`);
         } catch {
-            toast.error("Export failed.");
+            toast.error("导出失败。");
         }
     };
 
@@ -145,10 +147,10 @@ const KnowledgeBase = () => {
             <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-500/5 via-purple-500/10 to-transparent p-8 md:p-12 border border-purple-500/10 shadow-sm">
                 <div className="relative z-10 mx-auto max-w-2xl text-center space-y-4">
                     <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl">
-                        Knowledge Base
+                        知识库
                     </h1>
                     <p className="text-lg text-gray-600">
-                        Your personal academic knowledge library. Portable, exportable, yours.
+                        管理已提取的论文知识、图谱和闪卡。
                     </p>
                     <div className="flex flex-wrap justify-center gap-3 pt-2">
                         <Button
@@ -157,7 +159,7 @@ const KnowledgeBase = () => {
                             onClick={() => navigate("/knowledge/review")}
                         >
                             <GraduationCap className="h-4 w-4" />
-                            Review Flashcards
+                            复习闪卡
                             {dueCount > 0 && (
                                 <span className="ml-1 inline-flex items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-xs font-medium text-white">
                                     {dueCount}
@@ -170,13 +172,13 @@ const KnowledgeBase = () => {
                             onClick={() => navigate("/knowledge/graph")}
                         >
                             <Network className="h-4 w-4" />
-                            Knowledge Graph
+                            知识图谱
                         </Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" className="gap-2">
                                     <Download className="h-4 w-4" />
-                                    Export
+                                    导出
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent>
@@ -186,7 +188,7 @@ const KnowledgeBase = () => {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleExport("obsidian")}>
                                     <BookOpen className="mr-2 h-4 w-4" />
-                                    Obsidian Vault (ZIP)
+                                    Obsidian 笔记库 (ZIP)
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleExport("bibtex")}>
                                     <FileTextIcon className="mr-2 h-4 w-4" />
@@ -211,12 +213,12 @@ const KnowledgeBase = () => {
             {/* Paper List */}
             <section className="space-y-4">
                 <div className="flex items-center justify-between gap-4 px-2">
-                    <h2 className="text-2xl font-semibold tracking-tight shrink-0">Papers</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight shrink-0">论文</h2>
                     {papers.length > 0 && (
                         <div className="relative max-w-xs w-full">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Search papers..."
+                                placeholder="搜索论文..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="pl-9 h-9"
@@ -247,7 +249,7 @@ const KnowledgeBase = () => {
                                         </div>
                                         <div className="space-y-1 min-w-0 flex-1">
                                             <CardTitle className="text-base font-medium leading-tight line-clamp-2">
-                                                {paper.title || "Untitled"}
+                                                {paper.title || "未命名论文"}
                                             </CardTitle>
                                             <CardDescription className="text-xs flex items-center gap-1.5">
                                                 {paper.year && <span>{paper.year}</span>}
@@ -286,8 +288,8 @@ const KnowledgeBase = () => {
                             <Brain className="h-12 w-12 mx-auto mb-3 text-gray-300" />
                             <p>
                                 {search
-                                    ? "No matching papers found."
-                                    : "No papers in your knowledge base yet. Extract knowledge from a processed document to get started."}
+                                    ? "没有匹配的论文。"
+                                    : "知识库还没有论文。先从已处理文档中提取知识。"}
                             </p>
                         </div>
                     )}

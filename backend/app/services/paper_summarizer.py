@@ -99,11 +99,7 @@ class PaperSummarizer:
         head_budget = int(max_chars * 0.6)
         tail_budget = max_chars - head_budget
 
-        return (
-            full[:head_budget]
-            + "\n\n[...middle sections omitted for brevity...]\n\n"
-            + full[-tail_budget:]
-        )
+        return full[:head_budget] + "\n\n[...middle sections omitted for brevity...]\n\n" + full[-tail_budget:]
 
     async def _call_llm(self, client: httpx.AsyncClient, text: str) -> dict:
         payload = {
@@ -123,9 +119,7 @@ class PaperSummarizer:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = await client.post(
-                    "/chat/completions", json=payload, headers=headers
-                )
+                response = await client.post("/chat/completions", json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()

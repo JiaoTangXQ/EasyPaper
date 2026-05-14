@@ -35,6 +35,17 @@ const TYPE_COLORS: Record<string, string> = {
     organization: "#f97316",
 };
 
+const TYPE_LABELS: Record<string, string> = {
+    method: "方法",
+    model: "模型",
+    dataset: "数据集",
+    metric: "指标",
+    concept: "概念",
+    task: "任务",
+    person: "人物",
+    organization: "机构",
+};
+
 const KnowledgeGraph = () => {
     const navigate = useNavigate();
     const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -59,7 +70,7 @@ const KnowledgeGraph = () => {
             setNodes(response.data.nodes);
             setEdges(response.data.edges);
         } catch {
-            toast.error("Failed to load knowledge graph.");
+            toast.error("加载知识图谱失败。");
         } finally {
             setLoading(false);
         }
@@ -284,10 +295,10 @@ const KnowledgeGraph = () => {
         return (
             <div className="flex h-[calc(100vh-8rem)] flex-col items-center justify-center space-y-4">
                 <p className="text-muted-foreground">
-                    No entities in your knowledge graph yet. Extract knowledge from papers to build your graph.
+                    知识图谱中还没有实体。先从已处理文档中提取知识。
                 </p>
                 <Button onClick={() => navigate("/knowledge")}>
-                    <ArrowLeft className="mr-2 h-4 w-4" /> Knowledge Base
+                    <ArrowLeft className="mr-2 h-4 w-4" /> 知识库
                 </Button>
             </div>
         );
@@ -299,19 +310,19 @@ const KnowledgeGraph = () => {
             <div className="flex items-center justify-between rounded-xl border bg-white p-3 shadow-sm">
                 <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => navigate("/knowledge")}>
-                        <ArrowLeft className="mr-2 h-4 w-4" /> Back
+                        <ArrowLeft className="mr-2 h-4 w-4" /> 返回
                     </Button>
                     <div className="h-4 w-px bg-gray-200 mx-2 hidden sm:block" />
-                    <h1 className="text-sm font-medium hidden sm:block">Knowledge Graph</h1>
+                    <h1 className="text-sm font-medium hidden sm:block">知识图谱</h1>
                     <span className="text-xs text-muted-foreground hidden sm:block">
-                        ({nodes.length} entities, {edges.length} relationships)
+                        （{nodes.length} 个实体，{edges.length} 条关系）
                     </span>
                 </div>
                 <div className="flex items-center gap-2">
                     <div className="relative w-48">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                         <Input
-                            placeholder="Search entities..."
+                            placeholder="搜索实体..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="pl-8 h-8 text-xs"
@@ -356,7 +367,7 @@ const KnowledgeGraph = () => {
                     {Object.entries(TYPE_COLORS).map(([type, color]) => (
                         <div key={type} className="flex items-center gap-1">
                             <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-                            <span className="text-gray-600 capitalize">{type}</span>
+                            <span className="text-gray-600">{TYPE_LABELS[type] || type}</span>
                         </div>
                     ))}
                 </div>
@@ -377,11 +388,11 @@ const KnowledgeGraph = () => {
                             <p className="text-xs text-muted-foreground">{selectedNode.definition}</p>
                         )}
                         <p className="text-xs text-muted-foreground">
-                            Importance: {Math.round(selectedNode.importance * 100)}%
+                            重要性：{Math.round(selectedNode.importance * 100)}%
                         </p>
                         {/* Related edges */}
                         <div className="border-t pt-2 space-y-1">
-                            <p className="text-xs font-medium text-muted-foreground">Relationships:</p>
+                            <p className="text-xs font-medium text-muted-foreground">相关关系：</p>
                             {edges
                                 .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
                                 .slice(0, 5)

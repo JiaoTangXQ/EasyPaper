@@ -137,9 +137,7 @@ async def test_create_draft_downloads_pdf_from_url(tmp_path):
         downloader=DownloaderStub(),
     )
 
-    response = await service.create_or_update_draft(
-        AgentTranslateRequest(pdf_url="https://example.com/paper.pdf")
-    )
+    response = await service.create_or_update_draft(AgentTranslateRequest(pdf_url="https://example.com/paper.pdf"))
 
     assert response.status == "needs_input"
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from ..models.agent import AgentTranslateAccepted, DraftStatus, TranslationDraft
+from .background_tasks import create_tracked_task
 
 
 class TranslationExecutionService:
@@ -28,7 +28,7 @@ class TranslationExecutionService:
         self.task_manager.update_original_path(task.task_id, str(original_path))
         draft.status = DraftStatus.SUBMITTED
 
-        asyncio.create_task(
+        create_tracked_task(
             self.processor.process(
                 task.task_id,
                 file_bytes,

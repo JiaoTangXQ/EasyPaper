@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { isCancel } from "axios";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,13 +11,15 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/errors";
 
 const MAX_FILE_SIZE_MB = 50;
+const ACTIVE_TASK_STATUSES = new Set(["pending", "processing", "parsing", "rewriting", "rendering", "highlighting"]);
 
 interface Task {
     task_id: string;
     filename: string;
-    status: "pending" | "processing" | "parsing" | "rewriting" | "rendering" | "highlighting" | "completed" | "failed";
+    status: "pending" | "processing" | "parsing" | "rewriting" | "rendering" | "highlighting" | "completed" | "failed" | "error";
     created_at: string;
     percent?: number;
     message?: string;
@@ -36,7 +39,7 @@ const Dashboard = () => {
     const [urlLoading, setUrlLoading] = useState(false);
     const navigate = useNavigate();
     const abortRef = useRef<AbortController | null>(null);
-    const pollIntervalRef = useRef<number>(2000);
+    const hasActiveTasks = tasks.some((task) => ACTIVE_TASK_STATUSES.has(task.status));
 
     const fetchTasks = useCallback(async () => {
         try {
@@ -44,33 +47,22 @@ const Dashboard = () => {
             abortRef.current = new AbortController();
             const response = await api.get("/api/tasks", { signal: abortRef.current.signal });
             setTasks(response.data);
-        } catch (error: any) {
-            if (error.name === "CanceledError") return;
+        } catch (error: unknown) {
+            if (isCancel(error)) return;
         }
     }, []);
 
-    // Smart polling: fast when tasks are processing, slow when idle
+    // 活跃任务期间 2 秒刷新一次，空闲时降到 15 秒。
     useEffect(() => {
         fetchTasks();
-
-        const tick = () => {
-            const hasActive = tasks.some((t) =>
-                ["pending", "processing", "parsing", "rewriting", "rendering", "highlighting"].includes(t.status)
-            );
-            pollIntervalRef.current = hasActive ? 2000 : 15000;
-        };
-        tick();
-
-        const id = setInterval(() => {
-            tick();
-            fetchTasks();
-        }, pollIntervalRef.current);
+        const intervalMs = hasActiveTasks ? 2000 : 15000;
+        const id = window.setInterval(fetchTasks, intervalMs);
 
         return () => {
-            clearInterval(id);
+            window.clearInterval(id);
             abortRef.current?.abort();
         };
-    }, [fetchTasks, tasks.length, tasks.map((t) => t.status).join(",")]);
+    }, [fetchTasks, hasActiveTasks]);
 
     const validateFile = (file: File): boolean => {
         if (file.type !== "application/pdf") {
@@ -103,9 +95,8 @@ const Dashboard = () => {
             });
             toast.success(`"${file.name}" 上传成功。`);
             fetchTasks();
-        } catch (error: any) {
-            const msg = error.response?.data?.detail || "上传失败。";
-            toast.error(msg);
+        } catch (error: unknown) {
+            toast.error(getApiErrorMessage(error, "上传失败。"));
         } finally {
             setUploadProgress(null);
         }
@@ -166,9 +157,8 @@ const Dashboard = () => {
             toast.success("PDF 下载成功，已开始处理！");
             setPdfUrl("");
             fetchTasks();
-        } catch (error: any) {
-            const msg = error.response?.data?.detail || "从链接下载 PDF 失败。";
-            toast.error(msg);
+        } catch (error: unknown) {
+            toast.error(getApiErrorMessage(error, "从链接下载 PDF 失败。"));
         } finally {
             setUrlLoading(false);
         }
@@ -183,7 +173,9 @@ const Dashboard = () => {
             case "rendering":
             case "highlighting":
                 return "text-blue-600 bg-blue-50 border-blue-200";
-            case "failed": return "text-red-600 bg-red-50 border-red-200";
+            case "failed":
+            case "error":
+                return "text-red-600 bg-red-50 border-red-200";
             default: return "text-gray-600 bg-gray-50 border-gray-200";
         }
     };
@@ -197,8 +189,26 @@ const Dashboard = () => {
             case "rendering":
             case "highlighting":
                 return <Clock className="h-4 w-4 animate-pulse" />;
-            case "failed": return <AlertCircle className="h-4 w-4" />;
+            case "failed":
+            case "error":
+                return <AlertCircle className="h-4 w-4" />;
             default: return <Clock className="h-4 w-4" />;
+        }
+    };
+
+    const getStatusLabel = (status: string) => {
+        switch (status) {
+            case "pending": return "排队中";
+            case "processing": return "处理中";
+            case "parsing": return "解析中";
+            case "rewriting": return "生成中";
+            case "rendering": return "渲染中";
+            case "highlighting": return "高亮中";
+            case "completed": return "完成";
+            case "failed":
+            case "error":
+                return "失败";
+            default: return status;
         }
     };
 
@@ -407,7 +417,7 @@ const Dashboard = () => {
                                     <div className="flex items-center gap-1.5">
                                         <div className={cn("flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium border", getStatusColor(task.status))}>
                                             {getStatusIcon(task.status)}
-                                            <span className="capitalize">{task.status}</span>
+                                            <span>{getStatusLabel(task.status)}</span>
                                         </div>
                                         <Button
                                             variant="ghost"
@@ -476,7 +486,7 @@ const Dashboard = () => {
                                         </div>
                                     )}
 
-                                    {task.status === "failed" && (
+                                    {(task.status === "failed" || task.status === "error") && (
                                         <p className="text-xs text-red-500">
                                             {task.message || "处理失败"}
                                         </p>

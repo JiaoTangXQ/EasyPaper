@@ -70,9 +70,7 @@ class TranslationDraftService:
                 raise ValueError(f"Draft not found: {draft_id}")
             return draft
 
-    async def _load_or_create_draft(
-        self, session: Session, request: AgentTranslateRequest
-    ) -> TranslationDraft:
+    async def _load_or_create_draft(self, session: Session, request: AgentTranslateRequest) -> TranslationDraft:
         if request.draft_id:
             draft = session.get(TranslationDraft, request.draft_id)
             if not draft:

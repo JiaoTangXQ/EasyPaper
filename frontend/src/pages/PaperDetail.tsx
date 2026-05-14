@@ -74,7 +74,7 @@ const PaperDetail = () => {
                 const response = await api.get(`/api/knowledge/papers/${paperId}`);
                 setPaper(response.data);
             } catch {
-                toast.error("Failed to load paper.");
+                toast.error("加载论文失败。");
             } finally {
                 setLoading(false);
             }
@@ -94,25 +94,23 @@ const PaperDetail = () => {
             document.body.appendChild(link);
             link.click();
             link.parentNode?.removeChild(link);
-            toast.success("Exported as .epaper.json");
+            toast.success("已导出为 .epaper.json。");
         } catch {
-            toast.error("Export failed.");
+            toast.error("导出失败。");
         }
     };
 
     const handleAddNote = async () => {
         if (!newNote.trim()) return;
         try {
-            await api.post(`/api/knowledge/papers/${paperId}/annotations`, null, {
-                params: { type: "note", content: newNote },
-            });
+            await api.post(`/api/knowledge/papers/${paperId}/annotations`, { type: "note", content: newNote });
             setNewNote("");
             // Refresh paper data
             const response = await api.get(`/api/knowledge/papers/${paperId}`);
             setPaper(response.data);
-            toast.success("Note added.");
+            toast.success("笔记已添加。");
         } catch {
-            toast.error("Failed to add note.");
+            toast.error("添加笔记失败。");
         }
     };
 
@@ -127,8 +125,8 @@ const PaperDetail = () => {
     if (!paper) {
         return (
             <div className="flex h-[calc(100vh-8rem)] flex-col items-center justify-center space-y-4">
-                <p className="text-muted-foreground">Paper not found.</p>
-                <Button onClick={() => navigate("/knowledge")}>Back to Knowledge Base</Button>
+                <p className="text-muted-foreground">未找到论文。</p>
+                <Button onClick={() => navigate("/knowledge")}>返回知识库</Button>
             </div>
         );
     }
@@ -148,7 +146,7 @@ const PaperDetail = () => {
                 <div className="space-y-2">
                     <Button variant="ghost" size="sm" onClick={() => navigate("/knowledge")}>
                         <ArrowLeft className="mr-2 h-4 w-4" />
-                        Knowledge Base
+                        知识库
                     </Button>
                     <h1 className="text-2xl font-bold tracking-tight">{metadata.title}</h1>
                     <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -176,7 +174,7 @@ const PaperDetail = () => {
             {metadata.abstract && (
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Abstract</CardTitle>
+                        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">摘要</CardTitle>
                     </CardHeader>
                     <CardContent>
                         <p className="text-sm leading-relaxed">{metadata.abstract}</p>
@@ -189,27 +187,27 @@ const PaperDetail = () => {
                 <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
                     <TabsTrigger value="entities" className="gap-1.5">
                         <Brain className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Entities ({entities.length})</span>
+                        <span className="hidden sm:inline">实体 ({entities.length})</span>
                         <span className="sm:hidden">{entities.length}</span>
                     </TabsTrigger>
                     <TabsTrigger value="findings" className="gap-1.5">
                         <Lightbulb className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Findings ({findings.length})</span>
+                        <span className="hidden sm:inline">发现 ({findings.length})</span>
                         <span className="sm:hidden">{findings.length}</span>
                     </TabsTrigger>
                     <TabsTrigger value="flashcards" className="gap-1.5">
                         <GraduationCap className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Cards ({flashcards.length})</span>
+                        <span className="hidden sm:inline">闪卡 ({flashcards.length})</span>
                         <span className="sm:hidden">{flashcards.length}</span>
                     </TabsTrigger>
                     <TabsTrigger value="relations" className="gap-1.5">
                         <Link2 className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Relations ({relationships.length})</span>
+                        <span className="hidden sm:inline">关系 ({relationships.length})</span>
                         <span className="sm:hidden">{relationships.length}</span>
                     </TabsTrigger>
                     <TabsTrigger value="notes" className="gap-1.5">
                         <StickyNote className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Notes</span>
+                        <span className="hidden sm:inline">笔记</span>
                     </TabsTrigger>
                 </TabsList>
 
@@ -258,7 +256,7 @@ const PaperDetail = () => {
                                     <div className="space-y-1">
                                         <p className="text-sm">{f.statement}</p>
                                         {f.evidence && (
-                                            <p className="text-xs text-muted-foreground">Evidence: {f.evidence}</p>
+                                            <p className="text-xs text-muted-foreground">证据：{f.evidence}</p>
                                         )}
                                     </div>
                                 </div>
@@ -268,7 +266,7 @@ const PaperDetail = () => {
                     {methods.length > 0 && (
                         <div className="space-y-3 pt-4">
                             <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                                <FlaskConical className="h-4 w-4" /> Methods
+                                <FlaskConical className="h-4 w-4" /> 方法
                             </h3>
                             {methods.map((m, i) => (
                                 <Card key={i} className="border-gray-200/60">
@@ -283,14 +281,14 @@ const PaperDetail = () => {
                     {datasets.length > 0 && (
                         <div className="space-y-3 pt-4">
                             <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                                <Database className="h-4 w-4" /> Datasets
+                                <Database className="h-4 w-4" /> 数据集
                             </h3>
                             {datasets.map((d, i) => (
                                 <Card key={i} className="border-gray-200/60">
                                     <CardContent className="p-4">
                                         <p className="text-sm font-medium">{d.name}</p>
                                         <p className="text-xs text-muted-foreground mt-1">{d.description}</p>
-                                        {d.usage && <p className="text-xs text-muted-foreground">Usage: {d.usage}</p>}
+                                        {d.usage && <p className="text-xs text-muted-foreground">用途：{d.usage}</p>}
                                     </CardContent>
                                 </Card>
                             ))}
@@ -303,8 +301,8 @@ const PaperDetail = () => {
                     {flashcards.map((fc) => (
                         <Card key={fc.id} className="border-gray-200/60">
                             <CardContent className="p-4 space-y-2">
-                                <p className="text-sm font-medium">Q: {fc.front}</p>
-                                <p className="text-sm text-muted-foreground">A: {fc.back}</p>
+                                <p className="text-sm font-medium">问：{fc.front}</p>
+                                <p className="text-sm text-muted-foreground">答：{fc.back}</p>
                                 <div className="flex items-center gap-2">
                                     {fc.tags.map((tag) => (
                                         <span key={tag} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">
@@ -312,7 +310,7 @@ const PaperDetail = () => {
                                         </span>
                                     ))}
                                     <span className="text-[10px] text-muted-foreground ml-auto">
-                                        Difficulty: {fc.difficulty}/5
+                                        难度：{fc.difficulty}/5
                                     </span>
                                 </div>
                             </CardContent>
@@ -348,14 +346,14 @@ const PaperDetail = () => {
                 <TabsContent value="notes" className="space-y-3">
                     <div className="flex gap-2">
                         <Input
-                            placeholder="Add a note..."
+                            placeholder="添加笔记..."
                             value={newNote}
                             onChange={(e) => setNewNote(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
                         />
                         <Button size="sm" onClick={handleAddNote} className="gap-1 shrink-0">
                             <Plus className="h-4 w-4" />
-                            Add
+                            添加
                         </Button>
                     </div>
                     {annotations?.map((ann) => (
@@ -372,7 +370,7 @@ const PaperDetail = () => {
                     ))}
                     {(!annotations || annotations.length === 0) && !newNote && (
                         <p className="text-sm text-muted-foreground text-center py-8">
-                            No notes yet. Add one above.
+                            暂无笔记。可在上方添加。
                         </p>
                     )}
                 </TabsContent>

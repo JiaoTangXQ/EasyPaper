@@ -18,6 +18,12 @@ from .highlighter import HighlightService
 from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
+_PDF2ZH_ENV_LOCK = asyncio.Lock()
+_PDF2ZH_ENV_KEYS = (
+    "OPENAILIKED_BASE_URL",
+    "OPENAILIKED_API_KEY",
+    "OPENAILIKED_MODEL",
+)
 
 SIMPLIFY_PROMPT = Template(
     "You are an expert at simplifying academic English. "
@@ -28,6 +34,10 @@ SIMPLIFY_PROMPT = Template(
     "Source Text: $text\n\n"
     "Simplified Text:"
 )
+
+
+class DocumentProcessingError(RuntimeError):
+    """可直接展示给任务状态的处理错误。"""
 
 
 class DocumentProcessor:
@@ -45,32 +55,26 @@ class DocumentProcessor:
         else:
             self.task_manager.update_progress(task_id, TaskStatus.PARSING, 10, "正在准备翻译...")
 
-        # 设置 pdf2zh 环境变量
-        os.environ["OPENAILIKED_BASE_URL"] = self.config.llm.base_url
-        os.environ["OPENAILIKED_API_KEY"] = self.config.llm.api_key
-        os.environ["OPENAILIKED_MODEL"] = self.config.llm.model
-
         try:
             # 在线程中运行 pdf2zh（同步库）
-            result = await asyncio.to_thread(
-                self._translate_with_pdf2zh,
-                file_bytes,
-                filename,
-                task_id,
-                mode,
-            )
+            async with _PDF2ZH_ENV_LOCK:
+                previous_env = self._set_pdf2zh_env()
+                try:
+                    result = await asyncio.to_thread(
+                        self._translate_with_pdf2zh,
+                        file_bytes,
+                        filename,
+                        task_id,
+                        mode,
+                    )
+                finally:
+                    self._restore_pdf2zh_env(previous_env)
 
-            if result is None:
-                self.task_manager.set_error(task_id, "处理失败，请重试")
-                return
-
-            pdf_bytes, output_filename = result
+            pdf_bytes, output_filename, dual_pdf_bytes = result
 
             # 高亮后处理
             if highlight and pdf_bytes:
-                self.task_manager.update_progress(
-                    task_id, TaskStatus.HIGHLIGHTING, 85, "正在使用 AI 标注关键句..."
-                )
+                self.task_manager.update_progress(task_id, TaskStatus.HIGHLIGHTING, 85, "正在使用 AI 标注关键句...")
                 try:
                     highlight_service = HighlightService(
                         api_key=self.config.llm.api_key,
@@ -78,16 +82,31 @@ class DocumentProcessor:
                         base_url=self.config.llm.base_url,
                     )
                     async with highlight_service:
-                        pdf_bytes, stats = await highlight_service.highlight_pdf(pdf_bytes)
-                        self.task_manager.set_highlight_stats(
-                            task_id, json.dumps(stats.to_dict())
+                        pdf_bytes, stats, highlight_sentences = await highlight_service.highlight_pdf_with_metadata(
+                            pdf_bytes
                         )
-                        logger.info(
-                            f"Task {task_id} 高亮完成: {stats.total} sentences highlighted"
+                        self.task_manager.set_highlight_result(
+                            task_id,
+                            stats_json=json.dumps(stats.to_dict()),
+                            status=self._build_highlight_status(stats),
+                            sentences_json=json.dumps(highlight_sentences, ensure_ascii=False),
                         )
+                        logger.info(f"Task {task_id} 高亮完成: {stats.total} sentences highlighted")
                 except Exception as exc:
-                    logger.warning(
-                        "Highlight post-processing failed, using non-highlighted PDF: %s", exc
+                    logger.warning("Highlight post-processing failed, using non-highlighted PDF: %s", exc)
+                    self.task_manager.set_highlight_result(
+                        task_id,
+                        stats_json=json.dumps(
+                            {
+                                "core_conclusions": 0,
+                                "method_innovations": 0,
+                                "key_data": 0,
+                                "total": 0,
+                                "failed_matches": 0,
+                            }
+                        ),
+                        status="failed",
+                        sentences_json="[]",
                     )
 
             # 生成简单的预览 HTML
@@ -95,6 +114,7 @@ class DocumentProcessor:
 
             task_result = TaskResult(
                 pdf_bytes=pdf_bytes,
+                dual_pdf_bytes=dual_pdf_bytes,
                 preview_html=preview_html,
                 filename=output_filename,
             )
@@ -102,6 +122,9 @@ class DocumentProcessor:
             self.task_manager.set_result(task_id, task_result)
             logger.info(f"Task {task_id} 处理完成 (mode={mode})")
 
+        except DocumentProcessingError as exc:
+            logger.error("处理失败: %s", exc)
+            self.task_manager.set_error(task_id, str(exc))
         except Exception as exc:
             logger.exception("处理失败: %s", exc)
             self.task_manager.set_error(task_id, f"处理失败: {exc}")
@@ -112,15 +135,14 @@ class DocumentProcessor:
         filename: str,
         task_id: str,
         mode: str = "translate",
-    ) -> tuple[bytes, str] | None:
+    ) -> tuple[bytes, str, bytes | None]:
         """调用 pdf2zh 进行翻译或简化"""
 
         try:
             from pdf2zh import translate
             from pdf2zh.doclayout import DocLayoutModel
-        except ImportError:
-            logger.error("pdf2zh 未安装，请运行: pip install pdf2zh")
-            return None
+        except ImportError as exc:
+            raise DocumentProcessingError("pdf2zh 未安装，请运行: pip install pdf2zh") from exc
 
         # 加载 DocLayout-YOLO 模型
         model = DocLayoutModel.load_available()
@@ -157,30 +179,47 @@ class DocumentProcessor:
                 )
 
                 if not results or len(results) == 0:
-                    logger.error("pdf2zh 返回空结果")
-                    return None
+                    raise DocumentProcessingError("pdf2zh 返回空结果")
 
                 file_mono, file_dual = results[0]
 
                 # 更新进度
                 self.task_manager.update_progress(task_id, TaskStatus.RENDERING, 80, "正在生成 PDF...")
 
-                # 优先使用双语版本，如果没有则使用单语版本
-                output_file = file_dual if file_dual else file_mono
+                # 默认使用单语版本；双语版本作为单独下载选项保存。
+                output_file = file_mono if file_mono else file_dual
 
                 if output_file and Path(output_file).exists():
                     pdf_bytes = Path(output_file).read_bytes()
+                    dual_pdf_bytes = None
+                    if file_dual and Path(file_dual).exists() and Path(file_dual) != Path(output_file):
+                        dual_pdf_bytes = Path(file_dual).read_bytes()
                     prefix = "translated" if mode == "translate" else "simplified"
                     output_filename = f"{prefix}_{Path(filename).stem}.pdf"
                     logger.info(f"处理完成: {output_file}")
-                    return pdf_bytes, output_filename
+                    return pdf_bytes, output_filename, dual_pdf_bytes
 
-                logger.error("输出文件不存在")
-                return None
+                raise DocumentProcessingError("pdf2zh 输出文件不存在")
 
             except Exception as e:
                 logger.exception(f"pdf2zh 处理失败: {e}")
-                return None
+                if isinstance(e, DocumentProcessingError):
+                    raise
+                raise DocumentProcessingError(f"pdf2zh 处理失败: {e}") from e
+
+    def _set_pdf2zh_env(self) -> dict[str, str | None]:
+        previous_env = {key: os.environ.get(key) for key in _PDF2ZH_ENV_KEYS}
+        os.environ["OPENAILIKED_BASE_URL"] = self.config.llm.base_url
+        os.environ["OPENAILIKED_API_KEY"] = self.config.llm.api_key
+        os.environ["OPENAILIKED_MODEL"] = self.config.llm.model
+        return previous_env
+
+    def _restore_pdf2zh_env(self, previous_env: dict[str, str | None]) -> None:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _build_simple_preview(self, mode: str = "translate") -> str:
         """生成简单的预览 HTML"""
@@ -197,3 +236,10 @@ class DocumentProcessor:
             <p style="font-size: 12px;">使用 PDFMathTranslate 技术，保留公式和布局。</p>
         </div>
         """
+
+    def _build_highlight_status(self, stats) -> str:  # noqa: ANN001
+        if stats.total > 0 and stats.failed_matches == 0:
+            return "success"
+        if stats.total > 0:
+            return "partial"
+        return "failed"

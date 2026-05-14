@@ -25,6 +25,7 @@ class TaskProgress(SQLModel):
 
 class TaskResult(SQLModel):
     pdf_bytes: bytes | None = None
+    dual_pdf_bytes: bytes | None = None
     preview_html: str | None = None
     filename: str | None = None
 
@@ -43,10 +44,13 @@ class Task(SQLModel, table=True):
     # Highlight
     highlight: bool = Field(default=False)
     highlight_stats: str | None = Field(default=None)
+    highlight_status: str | None = Field(default=None)
+    highlight_sentences: str | None = Field(default=None)
 
     # Result fields
     original_pdf_path: str | None = Field(default=None)
     result_pdf_path: str | None = Field(default=None)
+    result_dual_pdf_path: str | None = Field(default=None)
     result_preview_html: str | None = Field(default=None)
     summary_json: str | None = Field(default=None)
 

@@ -51,9 +51,7 @@ def create_mcp_server(
                 options=draft_response.options,
             )
 
-        accepted = await execution_service.submit_draft(
-            draft_service.get_draft(draft_response.draft_id)
-        )
+        accepted = await execution_service.submit_draft(draft_service.get_draft(draft_response.draft_id))
         return AgentTranslateToolResult(
             status=accepted.status,
             draft_id=accepted.draft_id,
