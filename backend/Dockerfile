@@ -19,4 +19,6 @@ RUN mkdir -p /app/tmp /app/data /app/logs
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers + trusting the (internal-only) reverse proxy makes
+# request.client.host the real client IP, so per-IP rate limiting works behind Caddy.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
