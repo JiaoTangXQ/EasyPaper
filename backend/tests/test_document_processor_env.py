@@ -7,12 +7,13 @@ from app.services.document_processor import DocumentProcessor
 from app.services.task_manager import TaskManager
 
 
-def test_pdf2zh_env_is_restored_after_temporary_override(monkeypatch):
-    monkeypatch.setenv("OPENAILIKED_BASE_URL", "old-url")
+def test_pdf2zh_env_configured_from_config(monkeypatch):
+    # pdf2zh reads its LLM credentials from process-global env vars. Constructing the
+    # processor must publish them once, so translations don't need to lock/swap the
+    # env per call (which previously serialized all concurrent translations).
     monkeypatch.delenv("OPENAILIKED_API_KEY", raising=False)
-    monkeypatch.setenv("OPENAILIKED_MODEL", "old-model")
 
-    processor = DocumentProcessor(
+    DocumentProcessor(
         config=AppConfig(
             llm={
                 "api_key": "new-key",
@@ -23,12 +24,14 @@ def test_pdf2zh_env_is_restored_after_temporary_override(monkeypatch):
         task_manager=TaskManager(),
     )
 
-    previous = processor._set_pdf2zh_env()
     assert os.environ["OPENAILIKED_BASE_URL"] == "new-url"
     assert os.environ["OPENAILIKED_API_KEY"] == "new-key"
     assert os.environ["OPENAILIKED_MODEL"] == "new-model"
 
-    processor._restore_pdf2zh_env(previous)
-    assert os.environ["OPENAILIKED_BASE_URL"] == "old-url"
-    assert "OPENAILIKED_API_KEY" not in os.environ
-    assert os.environ["OPENAILIKED_MODEL"] == "old-model"
+
+def test_processor_has_no_global_translation_lock():
+    # Regression guard: there must be no module-level lock that serializes
+    # translations (the bug that made processing.max_concurrent meaningless).
+    import app.services.document_processor as dp
+
+    assert not hasattr(dp, "_PDF2ZH_ENV_LOCK")

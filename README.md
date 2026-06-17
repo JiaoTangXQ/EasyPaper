@@ -166,6 +166,10 @@ agent:
   mcp_mount_path: "/mcp"
 ```
 
+Set `APP_ENV=production` when deploying. In production the app **refuses to start**
+if `security.secret_key` or any `agent.api_keys` entry is still the placeholder
+default — in development these only log a warning.
+
 ---
 
 ## Agent Integration

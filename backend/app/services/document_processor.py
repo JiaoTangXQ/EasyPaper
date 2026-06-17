@@ -18,12 +18,6 @@ from .highlighter import HighlightService
 from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
-_PDF2ZH_ENV_LOCK = asyncio.Lock()
-_PDF2ZH_ENV_KEYS = (
-    "OPENAILIKED_BASE_URL",
-    "OPENAILIKED_API_KEY",
-    "OPENAILIKED_MODEL",
-)
 
 SIMPLIFY_PROMPT = Template(
     "You are an expert at simplifying academic English. "
@@ -44,6 +38,7 @@ class DocumentProcessor:
     def __init__(self, config: AppConfig, task_manager: TaskManager) -> None:
         self.config = config
         self.task_manager = task_manager
+        self._configure_pdf2zh_env()
 
     async def process(
         self, task_id: str, file_bytes: bytes, filename: str, mode: str = "translate", highlight: bool = False
@@ -56,19 +51,16 @@ class DocumentProcessor:
             self.task_manager.update_progress(task_id, TaskStatus.PARSING, 10, "正在准备翻译...")
 
         try:
-            # 在线程中运行 pdf2zh（同步库）
-            async with _PDF2ZH_ENV_LOCK:
-                previous_env = self._set_pdf2zh_env()
-                try:
-                    result = await asyncio.to_thread(
-                        self._translate_with_pdf2zh,
-                        file_bytes,
-                        filename,
-                        task_id,
-                        mode,
-                    )
-                finally:
-                    self._restore_pdf2zh_env(previous_env)
+            # 在线程中运行 pdf2zh（同步库）。pdf2zh 的 LLM 配置通过进程级环境变量传入，
+            # 已在 __init__ 中设置好，且对所有任务一致，因此无需在每次翻译时加锁切换环境
+            # （旧实现会因此把所有并发翻译串行化）。多个翻译可在此并发执行。
+            result = await asyncio.to_thread(
+                self._translate_with_pdf2zh,
+                file_bytes,
+                filename,
+                task_id,
+                mode,
+            )
 
             pdf_bytes, output_filename, dual_pdf_bytes = result
 
@@ -207,19 +199,16 @@ class DocumentProcessor:
                     raise
                 raise DocumentProcessingError(f"pdf2zh 处理失败: {e}") from e
 
-    def _set_pdf2zh_env(self) -> dict[str, str | None]:
-        previous_env = {key: os.environ.get(key) for key in _PDF2ZH_ENV_KEYS}
+    def _configure_pdf2zh_env(self) -> None:
+        """Publish the LLM config to the process env that pdf2zh reads.
+
+        Set once at construction. All tasks share the same config, so there is no
+        per-task variation to guard against — keeping the env stable lets multiple
+        translations run concurrently (bounded by processing.max_concurrent).
+        """
         os.environ["OPENAILIKED_BASE_URL"] = self.config.llm.base_url
         os.environ["OPENAILIKED_API_KEY"] = self.config.llm.api_key
         os.environ["OPENAILIKED_MODEL"] = self.config.llm.model
-        return previous_env
-
-    def _restore_pdf2zh_env(self, previous_env: dict[str, str | None]) -> None:
-        for key, value in previous_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
     def _build_simple_preview(self, mode: str = "translate") -> str:
         """生成简单的预览 HTML"""

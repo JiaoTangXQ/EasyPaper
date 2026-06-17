@@ -64,6 +64,30 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
 
 
+def validate_security(config: AppConfig, app_env: str) -> None:
+    """Warn (dev) or fail-fast (prod) on insecure default credentials.
+
+    Production is opted into with ``APP_ENV=production``; in that mode a default
+    JWT secret or agent API key aborts startup instead of merely logging.
+    """
+    is_prod = app_env.lower() in {"production", "prod"}
+
+    if "CHANGE_THIS" in config.security.secret_key:
+        message = "security.secret_key is still the default value. Set a strong secret key in config.yaml."
+        if is_prod:
+            raise RuntimeError(f"Refusing to start in production: {message}")
+        logger.warning("SECURITY WARNING: %s", message)
+
+    if any("CHANGE_ME" in key for key in config.agent.api_keys):
+        message = "agent.api_keys still contains the default 'CHANGE_ME'."
+        if is_prod:
+            raise RuntimeError(f"Refusing to start in production: {message}")
+        logger.warning("SECURITY WARNING: %s", message)
+
+    if not config.llm.api_key or config.llm.api_key == "YOUR_API_KEY":
+        logger.warning("LLM api_key is not configured. LLM features will fail.")
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -99,13 +123,7 @@ def get_config() -> AppConfig:
     raw = _load_yaml(config_path)
     config = AppConfig(**raw)
 
-    # Validate critical settings at startup
-    if "CHANGE_THIS" in config.security.secret_key:
-        logger.warning(
-            "SECURITY WARNING: secret_key is still the default value. "
-            "Set a strong secret key in config.yaml for production use."
-        )
-    if not config.llm.api_key or config.llm.api_key == "YOUR_API_KEY":
-        logger.warning("LLM api_key is not configured. LLM features will fail.")
+    # Validate critical settings at startup (fail-fast in production).
+    validate_security(config, os.getenv("APP_ENV", "development"))
 
     return config
