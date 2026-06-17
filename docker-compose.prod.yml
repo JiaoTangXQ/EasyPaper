@@ -1,0 +1,82 @@
+# Production stack for public deployment: Caddy (auto-HTTPS) + Postgres.
+# Only Caddy is exposed to the internet (80/443); backend and db stay on the
+# internal network. Configure secrets in a .env file (see .env.example) and a
+# strong security.secret_key in backend/config/config.yaml.
+#
+#   docker compose -f docker-compose.prod.yml up --build -d
+#
+# Then create accounts (self-registration is disabled in production):
+#   docker compose -f docker-compose.prod.yml exec backend python -m app.cli create-user you@example.com 'your-password'
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-easypaper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-easypaper}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-easypaper} -d ${POSTGRES_DB:-easypaper}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_CONFIG_PATH: /app/config/config.yaml
+      APP_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-easypaper}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-easypaper}
+    volumes:
+      - ./backend/config:/app/config
+      - backend-tmp:/app/tmp
+      - backend-logs:/app/logs
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pg-data:
+  backend-tmp:
+  backend-logs:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,18 @@
+# Auto-HTTPS reverse proxy. DOMAIN is injected from the compose .env file.
+# Caddy obtains and renews Let's Encrypt certificates automatically as long as
+# DOMAIN points at this server and ports 80/443 are reachable from the internet.
+
+{$DOMAIN} {
+	encode gzip
+
+	# API, MCP and health checks go straight to the backend.
+	@backend path /api/* /mcp /mcp/* /health
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else is the React SPA served by the frontend (nginx) container.
+	handle {
+		reverse_proxy frontend:80
+	}
+}
