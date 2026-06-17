@@ -99,6 +99,11 @@ docker compose up --build
 
 Open http://localhost in your browser.
 
+This `docker-compose.yml` is for a quick local trial (HTTP only, SQLite, backend
+port exposed). **For a public multi-user deployment** use the hardened stack
+(Caddy auto-HTTPS + Postgres, self-registration disabled, backend not exposed) —
+see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and `docker-compose.prod.yml`.
+
 For local Obsidian sync in Docker, mount your host vault into the backend container and use the mounted path in the Knowledge Base settings. Without a mount, the container cannot access files on your host machine.
 
 ### Option 2: Local Development

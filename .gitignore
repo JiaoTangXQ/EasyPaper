@@ -1,5 +1,6 @@
 # Config with secrets
 backend/config/config.yaml
+.env
 
 # Python
 __pycache__/
