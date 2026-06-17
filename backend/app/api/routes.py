@@ -154,10 +154,12 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor) -> AP
         ]
 
     @router.get("/status/{task_id}")
-    async def get_status(task_id: str) -> dict[str, Any]:
+    async def get_status(task_id: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
         task = task_manager.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="任务不存在")
+        if task.user_id != user.id:
+            raise HTTPException(status_code=403, detail="无权访问此任务")
         progress = task.progress
         result: dict[str, Any] = {
             "status": progress.status,
