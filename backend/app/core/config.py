@@ -46,6 +46,9 @@ class SecurityConfig(BaseModel):
         default=["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="cors_origins",
     )
+    # Public deployments should disable self-service registration and create
+    # accounts via `python -m app.cli create-user`.
+    allow_registration: bool = Field(True, alias="allow_registration")
 
 
 class AgentConfig(BaseModel):

@@ -7,6 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
+from ..core.config import get_config
 from ..core.db import get_session
 from ..core.security import create_access_token, get_password_hash, verify_password
 from ..models.user import Token, User, UserCreate, UserRead
@@ -18,6 +19,11 @@ limiter = Limiter(key_func=get_remote_address)
 @router.post("/register", response_model=UserRead)
 @limiter.limit("5/minute")
 def register(request: Request, user_in: UserCreate, session: Session = Depends(get_session)) -> Any:
+    if not get_config().security.allow_registration:
+        raise HTTPException(
+            status_code=403,
+            detail="Self-service registration is disabled. Ask an administrator to create your account.",
+        )
     user = session.exec(select(User).where(User.email == user_in.email)).first()
     if user:
         raise HTTPException(
