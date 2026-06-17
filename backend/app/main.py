@@ -13,6 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlmodel import Session
 
+from .api.agent_deps import MCPAuthMiddleware
 from .api.agent_routes import create_agent_router
 from .api.auth import router as auth_router
 from .api.knowledge_routes import create_knowledge_router
@@ -69,6 +70,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    MCPAuthMiddleware,
+    mount_path=config.agent.mcp_mount_path,
+    api_keys=config.agent.api_keys,
 )
 
 app.include_router(auth_router, prefix="/api/auth")

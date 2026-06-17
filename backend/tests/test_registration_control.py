@@ -14,6 +14,9 @@ class _Cfg:
 def test_register_blocked_when_disabled(client, monkeypatch):
     from app.api import auth as auth_module
 
+    # Isolate from the shared in-memory rate limiter so we exercise the 403
+    # (registration-disabled) branch, not a 429 from other tests' /register calls.
+    monkeypatch.setattr(auth_module.limiter, "enabled", False)
     monkeypatch.setattr(auth_module, "get_config", lambda: _Cfg())
     response = client.post(
         "/api/auth/register",
