@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Search, Loader2, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clientToGraphPoint } from "@/lib/graph";
 import { toast } from "sonner";
 import api from "@/lib/api";
 
@@ -251,8 +252,13 @@ const KnowledgeGraph = () => {
         if (!canvas) return;
 
         const rect = canvas.getBoundingClientRect();
-        const x = (e.clientX - rect.left - offset.x) / zoom;
-        const y = (e.clientY - rect.top - offset.y) / zoom;
+        const { x, y } = clientToGraphPoint(
+            { x: e.clientX, y: e.clientY },
+            rect,
+            { width: canvas.width, height: canvas.height },
+            offset,
+            zoom,
+        );
 
         const clicked = nodes.find((node) => {
             const pos = nodePositions[node.id];
