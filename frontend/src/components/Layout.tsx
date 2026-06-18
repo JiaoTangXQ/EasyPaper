@@ -13,10 +13,11 @@ import { LogOut, User as UserIcon, FileText, Brain } from "lucide-react";
 
 const Layout = () => {
     const navigate = useNavigate();
-    const userEmail = "用户"; // TODO: Get from context or local storage if available
+    const userEmail = localStorage.getItem("email") || "用户";
 
     const handleLogout = () => {
         localStorage.removeItem("token");
+        localStorage.removeItem("email");
         navigate("/login");
     };
 

@@ -128,6 +128,7 @@ const Reader = () => {
                 if (cancelled) return;
                 if (response.data.status === "completed") {
                     window.clearInterval(interval);
+                    setExtractingPaperId(null);
                     toast.success("知识提取完成。");
                     navigate(`/knowledge/paper/${extractingPaperId}`);
                 } else if (response.data.status === "error") {

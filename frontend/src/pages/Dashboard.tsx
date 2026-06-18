@@ -39,6 +39,7 @@ const Dashboard = () => {
     const [urlLoading, setUrlLoading] = useState(false);
     const navigate = useNavigate();
     const abortRef = useRef<AbortController | null>(null);
+    const errorShownRef = useRef(false);
     const hasActiveTasks = tasks.some((task) => ACTIVE_TASK_STATUSES.has(task.status));
 
     const fetchTasks = useCallback(async () => {
@@ -47,8 +48,15 @@ const Dashboard = () => {
             abortRef.current = new AbortController();
             const response = await api.get("/api/tasks", { signal: abortRef.current.signal });
             setTasks(response.data);
+            errorShownRef.current = false;
         } catch (error: unknown) {
             if (isCancel(error)) return;
+            // Surface the failure once per error streak instead of silently
+            // retrying forever, but don't spam a toast on every poll.
+            if (!errorShownRef.current) {
+                toast.error("无法加载任务列表，正在重试…");
+                errorShownRef.current = true;
+            }
         }
     }, []);
 

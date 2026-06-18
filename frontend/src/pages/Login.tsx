@@ -25,6 +25,7 @@ export default function Login() {
 
             const response = await api.post("/api/auth/login", formData);
             localStorage.setItem("token", response.data.access_token);
+            localStorage.setItem("email", email);
             navigate("/dashboard");
         } catch (error: unknown) {
             toast.error(getApiErrorMessage(error, "登录失败，请检查邮箱和密码。"));

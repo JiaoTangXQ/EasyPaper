@@ -44,6 +44,7 @@ const FlashcardReview = () => {
     const [loading, setLoading] = useState(true);
     const [reviewed, setReviewed] = useState(0);
     const [sessionDone, setSessionDone] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
 
     const fetchDueCards = useCallback(async () => {
         try {
@@ -65,8 +66,9 @@ const FlashcardReview = () => {
 
     const handleReview = async (quality: number) => {
         const card = cards[currentIndex];
-        if (!card) return;
+        if (!card || submitting) return;  // ignore rapid double-clicks
 
+        setSubmitting(true);
         try {
             await api.post(`/api/knowledge/flashcards/${card.id}/review`, { quality });
             setReviewed((prev) => prev + 1);
@@ -79,6 +81,8 @@ const FlashcardReview = () => {
             }
         } catch {
             toast.error("提交复习结果失败。");
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -203,6 +207,7 @@ const FlashcardReview = () => {
                         {QUALITY_OPTIONS.map((opt) => (
                             <Button
                                 key={opt.value}
+                                disabled={submitting}
                                 className={cn("flex-1 max-w-[120px] text-white", opt.color)}
                                 onClick={() => handleReview(opt.value)}
                             >

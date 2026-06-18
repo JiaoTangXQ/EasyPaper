@@ -106,19 +106,25 @@ const PaperSummary = () => {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        let cancelled = false;
         const fetchSummary = async () => {
             try {
                 const res = await api.post(`/api/summary/${taskId}`);
+                if (cancelled) return;
                 setData(res.data);
             } catch (err: unknown) {
+                if (cancelled) return;
                 const msg = getApiErrorMessage(err, "摘要生成失败。");
                 setError(msg);
                 toast.error(msg);
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
         fetchSummary();
+        return () => {
+            cancelled = true;
+        };
     }, [taskId]);
 
     /* Loading state */

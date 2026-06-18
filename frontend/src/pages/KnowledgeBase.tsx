@@ -68,7 +68,8 @@ const KnowledgeBase = () => {
             const response = await api.get("/api/knowledge/papers");
             setPapers(response.data);
         } catch {
-            // silently fail
+            // Surface the failure so an empty list isn't mistaken for "no papers".
+            toast.error("加载知识库失败，请稍后重试。");
         }
     }, []);
 
