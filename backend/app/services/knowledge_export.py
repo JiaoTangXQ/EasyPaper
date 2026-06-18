@@ -5,7 +5,61 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import zipfile
+
+# LaTeX/BibTeX special characters that must be escaped inside a {...} field.
+_BIBTEX_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+
+def _bibtex_escape(value: str) -> str:
+    # Escape backslash first so we don't double-escape the ones we introduce.
+    out = value.replace("\\", _BIBTEX_ESCAPES["\\"])
+    for char, repl in _BIBTEX_ESCAPES.items():
+        if char == "\\":
+            continue
+        out = out.replace(char, repl)
+    return out
+
+
+def _bibtex_cite_key(raw: str) -> str:
+    key = re.sub(r"[^A-Za-z0-9_:-]", "", raw or "")
+    return key or "ref"
+
+
+def _yaml_quote(value: object) -> str:
+    """Double-quote a scalar for YAML front-matter, escaping \\ and \"."""
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def to_bibtex(metadata: dict, cite_key: str) -> str:
+    """Render a BibTeX @article entry with LaTeX-escaped fields and a safe key."""
+    authors = metadata.get("authors", [])
+    author_str = " and ".join(a.get("name", "") for a in authors)
+    lines = [
+        f"@article{{{_bibtex_cite_key(cite_key)},",
+        f"  title = {{{_bibtex_escape(str(metadata.get('title', '')))}}},",
+        f"  author = {{{_bibtex_escape(author_str)}}},",
+        f"  year = {{{metadata.get('year', '') or ''}}},",
+    ]
+    if metadata.get("doi"):
+        lines.append(f"  doi = {{{_bibtex_escape(str(metadata['doi']))}}},")
+    if metadata.get("venue"):
+        lines.append(f"  journal = {{{_bibtex_escape(str(metadata['venue']))}}},")
+    lines.append("}\n")
+    return "\n".join(lines)
 
 
 class KnowledgeExporter:
@@ -166,15 +220,15 @@ def _paper_to_markdown(paper: dict) -> str:
 
     lines = [
         "---",
-        f'title: "{title}"',
-        f'authors: [{", ".join(repr(a.get("name", "")) for a in authors)}]',
+        f"title: {_yaml_quote(title)}",
+        f"authors: [{', '.join(_yaml_quote(a.get('name', '')) for a in authors)}]",
         f"year: {metadata.get('year', '')}",
     ]
     if metadata.get("doi"):
-        lines.append(f'doi: "{metadata["doi"]}"')
+        lines.append(f"doi: {_yaml_quote(metadata['doi'])}")
     if keywords:
-        lines.append(f"tags: [{', '.join(keywords)}]")
-    lines.append(f'easypaper_id: "{paper.get("id", "")}"')
+        lines.append(f"tags: [{', '.join(_yaml_quote(k) for k in keywords)}]")
+    lines.append(f"easypaper_id: {_yaml_quote(paper.get('id', ''))}")
     lines.append("---")
     lines.append("")
     lines.append(f"# {title}")

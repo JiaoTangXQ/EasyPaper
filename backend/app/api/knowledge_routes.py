@@ -28,6 +28,7 @@ from ..models.knowledge import (
 from ..models.task import Task, TaskStatus
 from ..models.user import User
 from ..services.background_tasks import create_tracked_task
+from ..services.knowledge_export import to_bibtex
 from ..services.knowledge_extractor import KnowledgeExtractor
 from ..services.obsidian_sync import ObsidianSyncService, get_obsidian_sync_lock
 from .deps import get_current_user
@@ -649,22 +650,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
             if bibtex:
                 bib_entries.append(bibtex)
             else:
-                # 从 metadata 生成 BibTeX
-                authors = metadata.get("authors", [])
-                author_str = " and ".join(a.get("name", "") for a in authors)
-                cite_key = p.id.replace("pk_", "")
-                entry = (
-                    f"@article{{{cite_key},\n"
-                    f"  title = {{{metadata.get('title', '')}}},\n"
-                    f"  author = {{{author_str}}},\n"
-                    f"  year = {{{metadata.get('year', '')}}},\n"
-                )
-                if metadata.get("doi"):
-                    entry += f"  doi = {{{metadata['doi']}}},\n"
-                if metadata.get("venue"):
-                    entry += f"  journal = {{{metadata['venue']}}},\n"
-                entry += "}\n"
-                bib_entries.append(entry)
+                bib_entries.append(to_bibtex(metadata, p.id.replace("pk_", "")))
 
         return PlainTextResponse(
             content="\n".join(bib_entries),
