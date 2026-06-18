@@ -181,22 +181,19 @@ class KnowledgeExtractor:
         for i, sec in enumerate(sections):
             sec["id"] = f"sec_{i + 1}"
 
-        # 4. 并发提取实体和关系（按 section 分块）
-        chunks = self._split_by_sections(full_text, sections)
+        # 4. 并发提取实体和关系（按 section 分块）。遍历全部 chunk，确保整篇正文
+        # 都参与抽取——不要再与 sections 做 zip（会截断丢文本）。
+        chunks = self._select_chunks(full_text, sections)
         all_entities: list[dict] = []
         all_relationships: list[dict] = []
 
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
-        async def extract_chunk(chunk_text: str, sec_id: str):
+        async def extract_chunk(chunk_text: str):
             async with semaphore:
                 return await self._llm_call(ENTITY_RELATIONSHIP_PROMPT, chunk_text, "entities")
 
-        tasks = [
-            extract_chunk(chunk, sec.get("id", f"sec_{i}"))
-            for i, (sec, chunk) in enumerate(zip(sections, chunks, strict=False))
-            if len(chunk.strip()) >= 100
-        ]
+        tasks = [extract_chunk(chunk) for chunk in chunks]
 
         if not tasks:
             # 如果没有足够的 section 分块，对全文做一次提取
@@ -395,11 +392,21 @@ class KnowledgeExtractor:
                 chunks.append(full_text[start : start + chunk_size])
             return chunks
 
+        # 保留第一个匹配标题之前的文本（通常是摘要/引言开头），不要丢弃。
+        if valid[0][0] > 0:
+            chunks.append(full_text[: valid[0][0]])
+
         for idx, (pos, _) in enumerate(valid):
             end = valid[idx + 1][0] if idx + 1 < len(valid) else len(full_text)
             chunks.append(full_text[pos:end])
 
         return chunks
+
+    def _select_chunks(self, full_text: str, sections: list[dict]) -> list[str]:
+        """Chunks to send for extraction. Covers the whole document; not tied to
+        the number of sections (the old zip(sections, chunks) silently dropped
+        any chunk beyond the section count, losing large parts of the paper)."""
+        return [chunk for chunk in self._split_by_sections(full_text, sections) if len(chunk.strip()) >= 100]
 
     # ------------------------------------------------------------------
     # 数据库持久化
