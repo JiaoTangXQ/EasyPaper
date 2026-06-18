@@ -94,6 +94,52 @@ HIGHLIGHT_SYSTEM_PROMPT = (
 SENTENCE_END_CHARS = frozenset("。！？!?；;")
 MIN_CANDIDATE_CHARS = 12
 
+# Lower-cased, dots stripped. A period right after one of these is not a sentence end.
+_ABBREVIATIONS = frozenset(
+    {
+        "et",
+        "al",
+        "etal",
+        "fig",
+        "figs",
+        "eq",
+        "eqs",
+        "no",
+        "nos",
+        "vs",
+        "cf",
+        "ie",
+        "eg",
+        "pp",
+        "vol",
+        "sec",
+        "secs",
+        "ref",
+        "refs",
+        "tab",
+        "tabs",
+        "approx",
+        "resp",
+        "viz",
+        "mr",
+        "mrs",
+        "ms",
+        "dr",
+        "prof",
+        "inc",
+        "ltd",
+        "dept",
+        "univ",
+        "ch",
+        "chap",
+        "st",
+        "co",
+        "corp",
+        "eds",
+        "ed",
+    }
+)
+
 
 class HighlightService:
     def __init__(
@@ -155,7 +201,8 @@ class HighlightService:
                 sentence_chars.append(char_box)
                 prev_char = chars[i - 1].char if i > 0 else ""
                 next_char = chars[i + 1].char if i + 1 < len(chars) else ""
-                if self._is_sentence_end(char_box.char, prev_char, next_char):
+                sentence_text = "".join(cb.char for cb in sentence_chars[:-1])
+                if self._is_sentence_end(char_box.char, prev_char, next_char, sentence_text):
                     candidate = self._build_candidate(page_index, page_sentence_index, sentence_chars)
                     if candidate:
                         candidates.append(candidate)
@@ -206,14 +253,40 @@ class HighlightService:
             return False
         return previous.isascii() and current.isascii() and previous.isalnum() and current.isalnum()
 
-    def _is_sentence_end(self, char: str, previous: str, current: str) -> bool:
+    def _is_sentence_end(self, char: str, previous: str, next_char: str, sentence_text: str = "") -> bool:
         if char in SENTENCE_END_CHARS:
             return True
         if char != ".":
             return False
-        if previous.isdigit() and current.isdigit():
+        # Decimal number: "3.14".
+        if previous.isdigit() and next_char.isdigit():
+            return False
+        # A real sentence end is followed by whitespace (or end of text). A period
+        # glued to the next char is an abbreviation/URL/acronym ("e.g.x", "domain.com").
+        if next_char and not next_char.isspace():
+            return False
+        token = self._trailing_word(sentence_text)
+        # Acronyms / dotted abbreviations like "i.e", "e.g", "U.S".
+        if "." in token:
+            return False
+        normalized = token.replace(".", "").lower()
+        # Single initial, e.g. the "J" in "J. Smith".
+        if len(normalized) == 1 and normalized.isalpha():
+            return False
+        if normalized in _ABBREVIATIONS:
             return False
         return True
+
+    @staticmethod
+    def _trailing_word(text: str) -> str:
+        """The trailing run of letters/periods immediately before the terminator."""
+        chars: list[str] = []
+        for ch in reversed(text):
+            if ch.isalpha() or ch == ".":
+                chars.append(ch)
+            else:
+                break
+        return "".join(reversed(chars))
 
     def _build_candidate(
         self,
