@@ -74,18 +74,23 @@ def _ensure_extracting_paper(
     task: Task,
     user_id: int,
     extraction_model: str,
-) -> PaperKnowledge:
+) -> tuple[PaperKnowledge, bool]:
+    """Claim a paper for extraction. Returns (paper, started), where ``started``
+    is True only if this call transitioned it into "extracting". An extraction
+    already in progress returns started=False so the caller doesn't launch a
+    duplicate run (which would create duplicate entities/flashcards)."""
     existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task.task_id)).first()
     if existing:
-        if existing.extraction_status != "completed":
-            existing.extraction_status = "extracting"
-            existing.extraction_error = None
-            existing.extraction_model = extraction_model
-            existing.updated_at = datetime.utcnow()
-            session.add(existing)
-            session.commit()
-            session.refresh(existing)
-        return existing
+        if existing.extraction_status == "extracting":
+            return existing, False
+        existing.extraction_status = "extracting"
+        existing.extraction_error = None
+        existing.extraction_model = extraction_model
+        existing.updated_at = datetime.utcnow()
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing, True
 
     paper = PaperKnowledge(
         id=f"pk_{uuid.uuid4().hex[:12]}",
@@ -97,7 +102,7 @@ def _ensure_extracting_paper(
     session.add(paper)
     session.commit()
     session.refresh(paper)
-    return paper
+    return paper, True
 
 
 def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
@@ -186,13 +191,17 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
 
         pdf_bytes = Path(task.original_pdf_path).read_bytes()
         with Session(engine) as session:
-            paper = _ensure_extracting_paper(
+            paper, started = _ensure_extracting_paper(
                 session=session,
                 task=task,
                 user_id=user.id,
                 extraction_model=extractor.model,
             )
             paper_id = paper.id
+
+        # 已有提取在进行中：直接返回，不再启动第二个提取任务（避免重复实体/闪卡）。
+        if not started:
+            return {"paper_id": paper_id, "status": "extracting"}
 
         # 异步执行提取
         async def _do_extract():

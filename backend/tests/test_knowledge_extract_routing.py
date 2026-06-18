@@ -29,13 +29,14 @@ def test_ensure_extracting_paper_creates_real_paper_id_for_new_task():
         session.add(task)
         session.commit()
 
-        paper = _ensure_extracting_paper(
+        paper, started = _ensure_extracting_paper(
             session=session,
             task=task,
             user_id=7,
             extraction_model="model-a",
         )
 
+        assert started is True
         assert paper.id != "pending"
         assert paper.task_id == "task-1"
         assert paper.user_id == 7
@@ -62,17 +63,19 @@ def test_ensure_extracting_paper_reuses_existing_paper_for_task():
         session.add(task)
         session.commit()
 
-        first = _ensure_extracting_paper(
+        first, first_started = _ensure_extracting_paper(
             session=session,
             task=task,
             user_id=7,
             extraction_model="model-a",
         )
-        second = _ensure_extracting_paper(
+        second, second_started = _ensure_extracting_paper(
             session=session,
             task=task,
             user_id=7,
             extraction_model="model-a",
         )
 
+        assert first_started is True
+        assert second_started is False  # already extracting
         assert second.id == first.id
