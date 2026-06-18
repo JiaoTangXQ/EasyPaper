@@ -88,3 +88,18 @@ async def test_cleanup_keeps_fresh_drafts(tmp_path):
     assert removed == 0
     with Session(engine) as session:
         assert session.get(TranslationDraft, created.draft_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_non_pdf_base64_is_rejected(tmp_path):
+    service, _engine = _service(tmp_path)
+    not_a_pdf = base64.b64encode(b"this is plain text, not a PDF").decode("ascii")
+    with pytest.raises(ValueError):
+        await service.create_or_update_draft(AgentTranslateRequest(pdf_base64=not_a_pdf))
+
+
+@pytest.mark.asyncio
+async def test_invalid_base64_raises_clear_error(tmp_path):
+    service, _engine = _service(tmp_path)
+    with pytest.raises(ValueError, match="base64"):
+        await service.create_or_update_draft(AgentTranslateRequest(pdf_base64="@@not base64@@"))

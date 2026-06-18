@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -118,7 +119,12 @@ class TranslationDraftService:
             return draft
 
         if request.pdf_base64:
-            file_bytes = base64.b64decode(request.pdf_base64, validate=True)
+            try:
+                file_bytes = base64.b64decode(request.pdf_base64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("pdf_base64 is not valid base64") from exc
+            if not file_bytes.startswith(b"%PDF"):
+                raise ValueError("Decoded pdf_base64 is not a PDF file")
             filename = "upload.pdf"
             source_type = "upload"
             source_url = None
