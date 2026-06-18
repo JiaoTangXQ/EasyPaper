@@ -184,7 +184,14 @@ class DocumentProcessor:
                 if output_file and Path(output_file).exists():
                     pdf_bytes = Path(output_file).read_bytes()
                     dual_pdf_bytes = None
-                    if file_dual and Path(file_dual).exists() and Path(file_dual) != Path(output_file):
+                    # Only translation produces a meaningful bilingual PDF; the
+                    # "dual" output of simplify is English-vs-English, so skip it.
+                    if (
+                        mode == "translate"
+                        and file_dual
+                        and Path(file_dual).exists()
+                        and Path(file_dual) != Path(output_file)
+                    ):
                         dual_pdf_bytes = Path(file_dual).read_bytes()
                     prefix = "translated" if mode == "translate" else "simplified"
                     output_filename = f"{prefix}_{Path(filename).stem}.pdf"
