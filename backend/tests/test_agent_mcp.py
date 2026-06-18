@@ -86,7 +86,9 @@ def build_agent_app(tmp_path: Path) -> FastAPI:
         temp_dir=tmp_path,
         draft_ttl_minutes=30,
     )
-    execution_service = TranslationExecutionService(task_manager=task_manager, processor=processor)
+    execution_service = TranslationExecutionService(
+        task_manager=task_manager, processor=processor, draft_service=draft_service
+    )
     artifact_service = TranslationArtifactService(task_manager=task_manager)
 
     mcp_server = create_mcp_server(

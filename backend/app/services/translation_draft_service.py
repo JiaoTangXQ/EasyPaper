@@ -38,6 +38,11 @@ class TranslationDraftService:
         with self.session_factory() as session:
             draft = await self._load_or_create_draft(session, request)
 
+            # A draft that was already submitted (or expired) is terminal; never
+            # resurrect it to READY, or the same PDF could be translated twice.
+            if draft.status in (DraftStatus.SUBMITTED, DraftStatus.EXPIRED):
+                raise ValueError(f"Draft {draft.draft_id} is already {draft.status} and cannot be modified")
+
             if request.highlight is not None:
                 draft.highlight = request.highlight
 
@@ -59,6 +64,25 @@ class TranslationDraftService:
             session.add(draft)
             session.commit()
             return AgentTranslateReady(draft_id=draft.draft_id)
+
+    def mark_submitted(self, draft_id: str) -> TranslationDraft:
+        """Atomically transition a READY draft to SUBMITTED and persist it.
+
+        Raises ValueError if the draft is missing or not READY (e.g. already
+        submitted), which is what makes submission one-shot.
+        """
+        with self.session_factory() as session:
+            draft = session.get(TranslationDraft, draft_id)
+            if not draft:
+                raise ValueError(f"Draft not found: {draft_id}")
+            if draft.status != DraftStatus.READY:
+                raise ValueError(f"Draft {draft_id} is not ready for submission (status={draft.status})")
+            draft.status = DraftStatus.SUBMITTED
+            session.add(draft)
+            session.commit()
+            session.refresh(draft)
+            session.expunge(draft)
+            return draft
 
     def cleanup_expired_drafts(self) -> None:
         return None

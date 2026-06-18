@@ -45,7 +45,9 @@ draft_service = TranslationDraftService(
     temp_dir=config.storage.temp_dir,
     draft_ttl_minutes=config.agent.draft_ttl_minutes,
 )
-execution_service = TranslationExecutionService(task_manager=task_manager, processor=processor)
+execution_service = TranslationExecutionService(
+    task_manager=task_manager, processor=processor, draft_service=draft_service
+)
 artifact_service = TranslationArtifactService(task_manager=task_manager)
 mcp_server = create_mcp_server(
     draft_service=draft_service,

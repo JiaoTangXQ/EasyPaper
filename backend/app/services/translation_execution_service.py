@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..models.agent import AgentTranslateAccepted, DraftStatus, TranslationDraft
+from ..models.agent import AgentTranslateAccepted, TranslationDraft
 from .background_tasks import create_tracked_task
 
 
 class TranslationExecutionService:
-    def __init__(self, task_manager, processor) -> None:
+    def __init__(self, task_manager, processor, draft_service) -> None:
         self.task_manager = task_manager
         self.processor = processor
+        self.draft_service = draft_service
 
     async def submit_draft(self, draft: TranslationDraft) -> AgentTranslateAccepted:
-        if draft.status != DraftStatus.READY:
-            raise ValueError("Draft is not ready for submission")
+        # Atomically claim the draft (READY -> SUBMITTED, persisted). This both
+        # rejects re-submission and guarantees the transition is durable.
+        draft = self.draft_service.mark_submitted(draft.draft_id)
         if not draft.source_path:
             raise ValueError("Draft source_path is missing")
 
@@ -26,7 +28,6 @@ class TranslationExecutionService:
         original_path = Path(self.task_manager.config.storage.temp_dir) / f"{task.task_id}_original.pdf"
         original_path.write_bytes(file_bytes)
         self.task_manager.update_original_path(task.task_id, str(original_path))
-        draft.status = DraftStatus.SUBMITTED
 
         create_tracked_task(
             self.processor.process(

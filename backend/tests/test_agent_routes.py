@@ -89,16 +89,27 @@ async def test_submit_ready_draft_creates_task(tmp_path):
 
     draft_path = tmp_path / "paper.pdf"
     draft_path.write_bytes(b"%PDF-1.4 test")
-    draft = TranslationDraft(
-        draft_id="dr_exec",
-        source_type="upload",
-        source_path=str(draft_path),
-        filename="paper.pdf",
-        highlight=False,
-        status=DraftStatus.READY,
-    )
 
-    service = TranslationExecutionService(task_manager=task_manager, processor=processor)
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine, tables=[TranslationDraft.__table__])
+    with Session(engine) as session:
+        session.add(
+            TranslationDraft(
+                draft_id="dr_exec",
+                source_type="upload",
+                source_path=str(draft_path),
+                filename="paper.pdf",
+                highlight=False,
+                status=DraftStatus.READY,
+            )
+        )
+        session.commit()
+    draft_service = TranslationDraftService(session_factory=lambda: Session(engine), temp_dir=tmp_path)
+    draft = draft_service.get_draft("dr_exec")
+
+    service = TranslationExecutionService(
+        task_manager=task_manager, processor=processor, draft_service=draft_service
+    )
     accepted = await service.submit_draft(draft)
 
     assert accepted.status == "accepted"
@@ -121,7 +132,9 @@ async def test_agent_translate_flow_returns_needs_input_then_accepts(tmp_path):
         temp_dir=tmp_path,
         draft_ttl_minutes=30,
     )
-    execution_service = TranslationExecutionService(task_manager=task_manager, processor=processor)
+    execution_service = TranslationExecutionService(
+        task_manager=task_manager, processor=processor, draft_service=draft_service
+    )
     artifact_service = TranslationArtifactService(task_manager=task_manager)
 
     app = FastAPI()

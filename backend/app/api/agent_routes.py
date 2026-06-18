@@ -15,11 +15,13 @@ def create_agent_router(draft_service, execution_service, artifact_service) -> A
         body: AgentTranslateRequest,
         _: None = Depends(require_agent_api_key),
     ):
-        draft_response = await draft_service.create_or_update_draft(body)
-        if draft_response.status == "needs_input":
-            return draft_response
-
-        accepted = await execution_service.submit_draft(draft_service.get_draft(draft_response.draft_id))
+        try:
+            draft_response = await draft_service.create_or_update_draft(body)
+            if draft_response.status == "needs_input":
+                return draft_response
+            accepted = await execution_service.submit_draft(draft_service.get_draft(draft_response.draft_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(status_code=202, content=accepted.model_dump())
 
     @router.get("/tasks/{task_id}")
