@@ -152,6 +152,37 @@ class TaskManager:
             session.delete(task)
             session.commit()
 
+    def fail_orphaned_tasks(self) -> int:
+        """Mark non-terminal tasks as errored and drop their temp files.
+
+        Background processing lives only in memory, so any task still mid-flight
+        after a restart is orphaned (no coroutine is driving it). Call this once
+        at startup so such tasks don't hang forever and leak their temp PDFs.
+        Returns the number reconciled.
+        """
+        _non_terminal = [
+            TaskStatus.PENDING,
+            TaskStatus.PARSING,
+            TaskStatus.REWRITING,
+            TaskStatus.RENDERING,
+            TaskStatus.HIGHLIGHTING,
+        ]
+        with Session(engine) as session:
+            tasks = session.exec(select(Task).where(Task.status.in_(_non_terminal))).all()
+            for task in tasks:
+                for path in (task.original_pdf_path, task.result_pdf_path, task.result_dual_pdf_path):
+                    if path:
+                        try:
+                            Path(path).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                task.status = TaskStatus.ERROR
+                task.error = "处理中断（服务重启）"
+                task.message = "处理中断（服务重启）"
+                session.add(task)
+            session.commit()
+            return len(tasks)
+
     def cleanup(self) -> None:
         cutoff = datetime.utcnow() - self._ttl
         _terminal = [TaskStatus.COMPLETED, TaskStatus.ERROR]

@@ -106,6 +106,10 @@ async def on_startup() -> None:
     global _cleanup_task, _mcp_session_context
     init_db()
     Path(config.storage.temp_dir).mkdir(parents=True, exist_ok=True)
+    # Reconcile tasks orphaned by a restart (in-memory processing is gone).
+    orphaned = task_manager.fail_orphaned_tasks()
+    if orphaned:
+        logger.info("Marked %d orphaned task(s) as errored on startup", orphaned)
     _mcp_session_context = mcp_server.session_manager.run()
     await _mcp_session_context.__aenter__()
     _cleanup_task = asyncio.create_task(run_cleanup_task())
