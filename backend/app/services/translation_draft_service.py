@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from ..models.agent import (
     AgentOption,
@@ -84,8 +85,23 @@ class TranslationDraftService:
             session.expunge(draft)
             return draft
 
-    def cleanup_expired_drafts(self) -> None:
-        return None
+    def cleanup_expired_drafts(self) -> int:
+        """Delete drafts past their TTL and remove their temp PDFs. Returns the
+        number removed. Without this, drafts and their files accumulated forever."""
+        cutoff = datetime.utcnow() - timedelta(minutes=self.draft_ttl_minutes)
+        removed = 0
+        with self.session_factory() as session:
+            stale = session.exec(select(TranslationDraft).where(TranslationDraft.created_at < cutoff)).all()
+            for draft in stale:
+                if draft.source_path:
+                    try:
+                        Path(draft.source_path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                session.delete(draft)
+                removed += 1
+            session.commit()
+        return removed
 
     def get_draft(self, draft_id: str) -> TranslationDraft:
         with self.session_factory() as session:

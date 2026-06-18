@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -53,3 +55,36 @@ async def test_submitted_draft_is_not_resurrected_to_ready(tmp_path):
     # Re-sending the same draft_id must not flip it back to READY for re-submission.
     with pytest.raises(ValueError):
         await service.create_or_update_draft(AgentTranslateRequest(draft_id=draft_id, highlight=True))
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_expired_drafts_and_their_files(tmp_path):
+    service, engine = _service(tmp_path)  # default TTL = 30 min
+    created = await service.create_or_update_draft(AgentTranslateRequest(pdf_base64=_b64()))
+
+    with Session(engine) as session:
+        draft = session.get(TranslationDraft, created.draft_id)
+        source = Path(draft.source_path)
+        assert source.exists()
+        draft.created_at = datetime.utcnow() - timedelta(minutes=31)  # past TTL
+        session.add(draft)
+        session.commit()
+
+    removed = service.cleanup_expired_drafts()
+
+    assert removed == 1
+    assert not source.exists()  # temp PDF cleaned up
+    with Session(engine) as session:
+        assert session.get(TranslationDraft, created.draft_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_fresh_drafts(tmp_path):
+    service, engine = _service(tmp_path)
+    created = await service.create_or_update_draft(AgentTranslateRequest(pdf_base64=_b64()))
+
+    removed = service.cleanup_expired_drafts()
+
+    assert removed == 0
+    with Session(engine) as session:
+        assert session.get(TranslationDraft, created.draft_id) is not None
