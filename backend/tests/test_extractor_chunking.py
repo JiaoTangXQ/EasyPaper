@@ -9,9 +9,9 @@ def _extractor() -> KnowledgeExtractor:
 
 def test_split_keeps_text_before_first_heading() -> None:
     ex = _extractor()
-    full = ("ABSTRACT preamble that must not be dropped. " * 4) + (
-        "METHODS body one. " * 4
-    ) + ("RESULTS body two. " * 4)
+    full = (
+        ("ABSTRACT preamble that must not be dropped. " * 4) + ("METHODS body one. " * 4) + ("RESULTS body two. " * 4)
+    )
     sections = [{"title": "METHODS"}, {"title": "RESULTS"}]
 
     chunks = ex._split_by_sections(full, sections)

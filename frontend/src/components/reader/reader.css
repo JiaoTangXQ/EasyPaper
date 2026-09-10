@@ -1,0 +1,431 @@
+.synced-workspace {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "PingFang SC",
+    sans-serif;
+}
+.synced-workspace ::selection {
+  background: #cfe5d6;
+  color: #203f2c;
+}
+.synced-workspace :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid #28614b;
+  outline-offset: 3px;
+}
+.synced-workspace :is(input, select, textarea) {
+  caret-color: #28614b;
+}
+.synced-topbar {
+  gap: 16px;
+  padding: 12px 18px;
+  background: #faf9f6;
+}
+.synced-topbar .reader-brand {
+  flex: 1 1 220px;
+}
+.synced-topbar .reader-brand h1 {
+  max-width: 100%;
+  font:
+    600 15px/1.5 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.reader-version-switch {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f0f1ec;
+}
+.reader-version-switch button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #535f56;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.reader-version-switch button:hover {
+  background: #e1e7df;
+}
+.reader-version-switch button[aria-pressed="true"] {
+  background: #28614b;
+  color: #fff;
+}
+.version-unready {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.reader-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+.reader-savebar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+  padding: 5px 20px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  color: #59625b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.reader-savebar [role="status"] {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.reader-savebar .save-complete {
+  color: #28614b;
+}
+.reader-savebar .save-pending {
+  color: #845515;
+}
+.reader-version-detail {
+  margin-left: auto;
+}
+.reader-savebar select {
+  max-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 2px;
+}
+.embed-reader {
+  overflow: hidden;
+}
+.synced-workspace .pdf-empty {
+  align-content: center;
+  height: 100%;
+  padding: 30px;
+  gap: 16px;
+  text-align: center;
+}
+.synced-workspace .pdf-empty h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+.synced-workspace .pdf-empty p {
+  max-width: 42ch;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.reader-text-button {
+  color: #28614b;
+  background: none;
+  border: 0;
+  padding: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.reader-inline-error {
+  position: absolute;
+  z-index: 40;
+  inset: 0 0 auto;
+  padding: 12px;
+  background: #fff0ec;
+  color: #973b24;
+  font-size: 14px;
+}
+.reader-sidepanel {
+  overflow: hidden;
+  flex-basis: 340px;
+  width: 340px;
+}
+.reader-sidepanel .assistant-head {
+  align-items: center;
+  padding: 15px 16px;
+}
+.reader-sidepanel .assistant-head h2 {
+  font:
+    600 16px/1.4 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.annotation-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.annotation-filters input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbf9;
+  color: var(--ink);
+  font-size: 13px;
+}
+.annotation-filters select {
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+}
+.annotation-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #bbc5bd transparent;
+  scrollbar-width: thin;
+}
+.annotation-row {
+  padding: 16px;
+  border-bottom: 1px solid #e7eae5;
+}
+.annotation-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.annotation-row-head button {
+  border: 0;
+  padding: 2px 0;
+  background: none;
+  color: #28614b;
+  font-size: 12px;
+  cursor: pointer;
+}
+.annotation-row-head input[type="color"] {
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px;
+  cursor: pointer;
+}
+.annotation-row blockquote {
+  margin: 10px 0;
+  max-height: 160px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font:
+    14px/1.7 Georgia,
+    "Songti SC",
+    serif;
+  color: #323b34;
+}
+.annotation-row textarea {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid #e0e5dd;
+  border-radius: 5px;
+  background: #fbfcf9;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.annotation-row textarea::placeholder,
+.annotation-filters input::placeholder {
+  color: #647063;
+}
+.annotation-kind {
+  color: #5b655b;
+  font-size: 13px;
+}
+.annotation-alignment {
+  margin: 9px 0;
+  color: #646a60;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.annotation-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+.annotation-row-actions button,
+.annotation-footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #28614b;
+  cursor: pointer;
+  font-size: 11px;
+}
+.annotation-row-actions button:hover,
+.annotation-footer button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.annotation-row-actions button:last-child {
+  margin-left: auto;
+}
+.annotation-row.is-deleted {
+  background: #f6f7f3;
+}
+.annotation-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 45px 24px;
+  color: #636d64;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.75;
+}
+.annotation-empty p {
+  margin: 0;
+}
+.annotation-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 5px 15px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  background: #fafbf8;
+}
+.reader-field {
+  display: grid;
+  gap: 6px;
+  color: #4c5c50;
+  font-size: 12px;
+}
+.reader-field textarea {
+  width: 100%;
+}
+.reader-evidence {
+  border: 0;
+  background: none;
+  padding: 6px 0;
+  text-align: left;
+  color: #28614b;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.reader-conflicts {
+  padding: 8px 18px;
+  background: #fff3dd;
+  color: #704608;
+  font-size: 12px;
+}
+.reader-conflicts > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.reader-conflicts button {
+  border: 1px solid #be9452;
+  border-radius: 4px;
+  background: transparent;
+  padding: 5px;
+}
+@media (min-width: 761px) {
+  .synced-workspace .reader-sidepanel {
+    position: relative;
+    inset: auto;
+    height: auto;
+    box-shadow: none;
+  }
+}
+@media (max-width: 1250px) {
+  .synced-topbar {
+    flex-wrap: wrap;
+  }
+  .synced-topbar .reader-brand {
+    flex-basis: calc(100% - 340px);
+  }
+  .reader-version-switch {
+    order: 3;
+  }
+  .synced-topbar .reader-brand h1 {
+    max-width: 100%;
+  }
+}
+@media (max-width: 900px) {
+  .synced-topbar {
+    flex-direction: row;
+    align-items: center;
+  }
+  .synced-workspace .reader-actions {
+    margin-left: auto;
+  }
+}
+@media (max-width: 760px) {
+  .synced-topbar {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+  .synced-topbar .reader-brand {
+    flex-basis: calc(100% - 150px);
+  }
+  .synced-topbar .reader-brand h1 {
+    font-size: 13px;
+  }
+  .synced-workspace .desktop-label {
+    display: none;
+  }
+  .reader-actions {
+    gap: 4px;
+  }
+  .reader-actions > button {
+    padding: 6px 8px;
+  }
+  .reader-version-switch {
+    width: 100%;
+  }
+  .reader-version-switch button {
+    flex: 1;
+    justify-content: center;
+    padding: 6px 3px;
+    font-size: 12px;
+  }
+  .version-unready {
+    display: none;
+  }
+  .reader-savebar {
+    gap: 5px 10px;
+    padding: 5px 12px;
+    font-size: 10px;
+  }
+  .synced-workspace .reader-sidepanel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 30;
+    width: min(92vw, 340px);
+    height: 100%;
+    box-shadow: -8px 0 24px rgb(24 43 28 / 15%);
+  }
+  .annotation-row-actions button {
+    min-height: 36px;
+  }
+}

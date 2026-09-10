@@ -17,6 +17,7 @@ from .api.agent_deps import MCPAuthMiddleware
 from .api.agent_routes import create_agent_router
 from .api.auth import router as auth_router
 from .api.knowledge_routes import create_knowledge_router
+from .api.reader_routes import create_reader_router
 from .api.reading_routes import create_reading_router
 from .api.routes import create_router
 from .core.config import get_config
@@ -54,6 +55,7 @@ execution_service = TranslationExecutionService(
     task_manager=task_manager, processor=processor, draft_service=draft_service
 )
 reading_service = ReadingService(config, engine, ai_client=ai_client)
+reading_service.reader_processor = processor
 artifact_service = TranslationArtifactService(task_manager=task_manager)
 mcp_server = create_mcp_server(
     draft_service=draft_service,
@@ -96,6 +98,7 @@ app.include_router(
 app.include_router(create_router(task_manager, processor, reading_service))
 app.include_router(create_knowledge_router(knowledge_extractor))
 app.include_router(create_reading_router(reading_service))
+app.include_router(create_reader_router(reading_service))
 app.router.routes.extend(mcp_server.streamable_http_app().routes)
 
 
@@ -112,6 +115,16 @@ _mcp_session_context: Any = None
 async def on_startup() -> None:
     global _cleanup_task, _mcp_session_context
     init_db()
+    # In-process PDF generation cannot survive a restart; saved revisions can.
+    from sqlmodel import select
+
+    from .models.reading import ReaderBuild
+
+    with Session(engine) as session:
+        for build in session.exec(select(ReaderBuild).where(ReaderBuild.status == "running")).all():
+            build.status, build.error = "error", "生成因服务重启中断，可重试；已有版本和批注仍保留"
+            session.add(build)
+        session.commit()
     Path(config.storage.temp_dir).mkdir(parents=True, exist_ok=True)
     # Reconcile tasks orphaned by a restart (in-memory processing is gone).
     orphaned = task_manager.fail_orphaned_tasks()

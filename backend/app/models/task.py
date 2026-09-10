@@ -29,6 +29,7 @@ class TaskResult(SQLModel):
     dual_pdf_bytes: bytes | None = None
     preview_html: str | None = None
     filename: str | None = None
+    translation_records: list[dict[str, str]] | None = None
 
 
 class Task(SQLModel, table=True):

@@ -40,6 +40,8 @@ class ProcessingConfig(BaseModel):
 class StorageConfig(BaseModel):
     cleanup_minutes: int = Field(30, alias="cleanup_minutes")
     temp_dir: str = Field("./backend/tmp", alias="temp_dir")
+    # Empty means a reader-library directory inside temp_dir (which must be persisted).
+    library_dir: str = ""
 
 
 class LoggingConfig(BaseModel):

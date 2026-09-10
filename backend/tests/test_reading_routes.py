@@ -35,7 +35,9 @@ def _client(tmp_path):
     SQLModel.metadata.create_all(engine)
     source = tmp_path / "paper.pdf"
     source.write_bytes(_pdf())
-    task = Task(task_id="task-1", filename="paper.pdf", user_id=1, status=TaskStatus.COMPLETED, original_pdf_path=str(source))
+    task = Task(
+        task_id="task-1", filename="paper.pdf", user_id=1, status=TaskStatus.COMPLETED, original_pdf_path=str(source)
+    )
     with Session(engine) as session:
         session.add(User(id=1, email="reader@example.com", hashed_password="hash"))
         session.add(task)
@@ -53,7 +55,9 @@ def test_workspace_and_state_are_persistent(tmp_path):
     response = client.get("/api/reading/task-1")
     assert response.status_code == 200
     block = response.json()["document"]["blocks"][1]["id"]
-    saved = client.patch("/api/reading/task-1/state", json={"block_id": block, "mode": "bilingual", "understood": [block]})
+    saved = client.patch(
+        "/api/reading/task-1/state", json={"block_id": block, "mode": "bilingual", "understood": [block]}
+    )
     assert saved.status_code == 200
     assert saved.json()["mode"] == "bilingual"
     with Session(engine) as session:

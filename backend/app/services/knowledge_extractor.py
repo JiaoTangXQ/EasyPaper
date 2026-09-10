@@ -79,7 +79,7 @@ FINDINGS_PROMPT = (
     "数据集：记录名称、描述及使用方式\n\n"
     "所有描述性文本使用中文，专有名词保留英文。\n\n"
     "仅返回 JSON：\n"
-    '每条 finding、method 和 dataset 增加 evidence_refs 字段，值只能是输入中的 block_id。\n'
+    "每条 finding、method 和 dataset 增加 evidence_refs 字段，值只能是输入中的 block_id。\n"
     '{"findings": [{"type": "result", "statement": "...", "evidence": "...", "evidence_refs": ["b_..."]}], '
     '"methods": [{"name": "...", "description": "...", "inputs": ["..."], "outputs": ["..."]}], '
     '"datasets": [{"name": "...", "description": "...", "usage": "evaluation"}]}\n'
@@ -173,7 +173,9 @@ class KnowledgeExtractor:
             self._save_paper(paper)
             raise
 
-    async def _run_pipeline(self, pdf_bytes: bytes, paper_id: str, user_id: int, reading_document: dict | None = None) -> dict:
+    async def _run_pipeline(
+        self, pdf_bytes: bytes, paper_id: str, user_id: int, reading_document: dict | None = None
+    ) -> dict:
         """执行提取流水线的各阶段。"""
         # 1. 提取 PDF 全文
         pages_text = self._extract_text(pdf_bytes)
@@ -191,7 +193,14 @@ class KnowledgeExtractor:
         if reading_document and reading_document.get("sections"):
             summaries = {str(sec.get("title", "")).lower(): sec.get("summary", "") for sec in sections}
             sections = [
-                {"id": sec["id"], "title": sec["title"], "level": 1, "page": sec["page"], "block_id": sec["block_id"], "summary": summaries.get(sec["title"].lower(), "")}
+                {
+                    "id": sec["id"],
+                    "title": sec["title"],
+                    "level": 1,
+                    "page": sec["page"],
+                    "block_id": sec["block_id"],
+                    "summary": summaries.get(sec["title"].lower(), ""),
+                }
                 for sec in reading_document["sections"]
             ]
         else:

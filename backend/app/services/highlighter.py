@@ -394,10 +394,18 @@ class HighlightService:
     async def _do_classify_candidates(self, candidates: list[HighlightCandidate]) -> list[HighlightSelection]:
         parsed = await self.ai.complete_json(
             HIGHLIGHT_SYSTEM_PROMPT,
-            "Sentence candidates:\n\n" + json.dumps([
-                {"sentence_id": candidate.sentence_id, "page": candidate.page_index + 1, "text": candidate.text[:800]}
-                for candidate in candidates
-            ], ensure_ascii=False),
+            "Sentence candidates:\n\n"
+            + json.dumps(
+                [
+                    {
+                        "sentence_id": candidate.sentence_id,
+                        "page": candidate.page_index + 1,
+                        "text": candidate.text[:800],
+                    }
+                    for candidate in candidates
+                ],
+                ensure_ascii=False,
+            ),
             max_tokens=2048,
         )
 

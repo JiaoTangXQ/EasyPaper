@@ -8,6 +8,7 @@ backend/config/*.yaml
 **/.codex/
 .codez/
 **/.codez/
+.impeccable/
 *.pem
 *.key
 *.p12
@@ -23,16 +24,25 @@ backend/.venv-dev/
 # Node
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Temp files & logs
 backend/tmp/
 backend/backend/
 backend/logs/
+*.log
 
 # ML models
 backend/models/

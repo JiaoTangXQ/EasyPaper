@@ -296,9 +296,7 @@ def test_sync_uses_frontmatter_fallback_when_mapping_path_is_missing(tmp_path: P
     service.save_settings(user_id=1, vault_path=str(tmp_path), root_folder="EasyPaper")
     service.sync_paper(user_id=1, paper_id="paper-1")
 
-    mapping = session.exec(
-        select(ObsidianSyncMapping).where(ObsidianSyncMapping.item_type == "paper")
-    ).one()
+    mapping = session.exec(select(ObsidianSyncMapping).where(ObsidianSyncMapping.item_type == "paper")).one()
     original = tmp_path / mapping.relative_path
     renamed = original.with_name("Renamed Paper.md")
     original.rename(renamed)

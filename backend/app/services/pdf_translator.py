@@ -72,8 +72,12 @@ class PDFTranslator:
             # 调用 pdf2zh 翻译
             with pdf2zh_backend(self.llm_config) as backend:
                 results = translate(
-                    files=[input_path], lang_in=self.lang_in, lang_out=self.lang_out,
-                    thread=self.thread, output=output_dir, **backend,
+                    files=[input_path],
+                    lang_in=self.lang_in,
+                    lang_out=self.lang_out,
+                    thread=self.thread,
+                    output=output_dir,
+                    **backend,
                 )
 
             if results and len(results) > 0:
@@ -113,8 +117,11 @@ class PDFTranslator:
             # 调用 pdf2zh 流式翻译
             with pdf2zh_backend(self.llm_config) as backend:
                 stream_mono, stream_dual = translate_stream(
-                    stream=pdf_bytes, lang_in=self.lang_in, lang_out=self.lang_out,
-                    thread=self.thread, **backend,
+                    stream=pdf_bytes,
+                    lang_in=self.lang_in,
+                    lang_out=self.lang_out,
+                    thread=self.thread,
+                    **backend,
                 )
 
             logger.info("PDF 流翻译完成")

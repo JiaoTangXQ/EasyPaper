@@ -117,9 +117,7 @@ def build_paper_markdown(
             flow_text = " -> ".join(str(part) for part in flow if part)
             if flow_text:
                 lines.extend(["", "### 技术流程", flow_text])
-        contributions = (
-            summary_page.get("contributions") if isinstance(summary_page.get("contributions"), list) else []
-        )
+        contributions = summary_page.get("contributions") if isinstance(summary_page.get("contributions"), list) else []
         if contributions:
             lines.extend(["", "### 主要贡献"])
             lines.extend(f"- {item}" for item in contributions if item)

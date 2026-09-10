@@ -1,4 +1,5 @@
 """Loss-aware PDF reading blocks. The original PDF remains the source of truth."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +9,9 @@ from collections import Counter
 import fitz
 
 SCHEMA_VERSION = 1
-HEADING = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+\S|abstract\b|introduction\b|conclusions?\b|references\b|acknowledg|appendix\b)", re.I)
+HEADING = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?\s+\S|abstract\b|introduction\b|conclusions?\b|references\b|acknowledg|appendix\b)", re.I
+)
 CAPTION = re.compile(r"^(?:fig(?:ure)?\.?|table)\s*\d+", re.I)
 
 
@@ -21,8 +24,8 @@ def _ordered(items: list[dict], width: float) -> list[dict]:
     """Read narrow columns within bands delimited by spanning blocks."""
     items = sorted(items, key=lambda b: (b["bbox"][1], b["bbox"][0]))
     middle = width / 2
-    left = [b for b in items if b["bbox"][2] < middle + 15 and b["bbox"][2] - b["bbox"][0] > width * .2]
-    right = [b for b in items if b["bbox"][0] > middle - 15 and b["bbox"][2] - b["bbox"][0] > width * .2]
+    left = [b for b in items if b["bbox"][2] < middle + 15 and b["bbox"][2] - b["bbox"][0] > width * 0.2]
+    right = [b for b in items if b["bbox"][0] > middle - 15 and b["bbox"][2] - b["bbox"][0] > width * 0.2]
     if len(left) < 2 or len(right) < 2:
         return items
     spans = [b for b in items if b["bbox"][0] < middle - 20 and b["bbox"][2] > middle + 20]
@@ -33,7 +36,9 @@ def _ordered(items: list[dict], width: float) -> list[dict]:
         band = [b for b in rest if b["bbox"][1] < stop]
         rest = [b for b in rest if b["bbox"][1] >= stop]
         for column in (0, 1):
-            ordered.extend(sorted([b for b in band if int(b["bbox"][0] >= middle - 15) == column], key=lambda b: b["bbox"][1]))
+            ordered.extend(
+                sorted([b for b in band if int(b["bbox"][0] >= middle - 15) == column], key=lambda b: b["bbox"][1])
+            )
         if span:
             ordered.append(span)
     return ordered
@@ -87,7 +92,11 @@ def parse_document(pdf_bytes: bytes, filename: str = "Paper.pdf") -> dict:
             body_size = sizes.most_common(1)[0][0] if sizes else 10
             for item in items:
                 t = item["source_text"]
-                if item["type"] == "paragraph" and len(t) < 160 and (HEADING.match(t) or item.get("font_size", 0) > body_size * 1.22):
+                if (
+                    item["type"] == "paragraph"
+                    and len(t) < 160
+                    and (HEADING.match(t) or item.get("font_size", 0) > body_size * 1.22)
+                ):
                     item["type"] = "heading"
             graphics = [fitz.Rect(info["bbox"]) for info in page.get_image_info()]
             try:
@@ -104,19 +113,31 @@ def parse_document(pdf_bytes: bytes, filename: str = "Paper.pdf") -> dict:
                 regions = [r for r in regions if not rect.contains(r)]
                 regions.append(rect)
             for rect in regions:
-                captions = [i for i in items if i["type"] == "caption" and abs(i["bbox"][1] - rect.y1) < 95 and i["bbox"][0] < rect.x1 and i["bbox"][2] > rect.x0]
+                captions = [
+                    i
+                    for i in items
+                    if i["type"] == "caption"
+                    and abs(i["bbox"][1] - rect.y1) < 95
+                    and i["bbox"][0] < rect.x1
+                    and i["bbox"][2] > rect.x0
+                ]
                 caption = min(captions, key=lambda b: abs(b["bbox"][1] - rect.y1), default=None)
-                items.append({"type": "figure", "source_text": caption["source_text"] if caption else "", "bbox": list(rect)})
+                items.append(
+                    {"type": "figure", "source_text": caption["source_text"] if caption else "", "bbox": list(rect)}
+                )
             if not any(i["source_text"] for i in items):
                 items = [{"type": "scan", "source_text": "", "bbox": [0, 0, width, height]}]
                 warnings.append(f"第 {page_index + 1} 页没有可提取文本，显示原始页面，可请求图像解读。")
             for item in _ordered(items, width):
-                stable = hashlib.sha256(f'{digest}:{page_index}:{item["type"]}:{item["bbox"]}:{item["source_text"]}'.encode()).hexdigest()[:16]
+                stable = hashlib.sha256(
+                    f'{digest}:{page_index}:{item["type"]}:{item["bbox"]}:{item["source_text"]}'.encode()
+                ).hexdigest()[:16]
                 item.update(id=f"b_{stable}", page=page_index + 1, index=len(blocks))
                 item.pop("font_size", None)
                 item["sentences"] = [
                     {"id": f"b_{stable}_s{n}", "text": m.group(), "start": m.start(), "end": m.end()}
-                    for n, m in enumerate(re.finditer(r"[^.!?。！？]+[.!?。！？]*", item["source_text"])) if m.group().strip()
+                    for n, m in enumerate(re.finditer(r"[^.!?。！？]+[.!?。！？]*", item["source_text"]))
+                    if m.group().strip()
                 ]
                 blocks.append(item)
     sections = []
@@ -124,11 +145,22 @@ def parse_document(pdf_bytes: bytes, filename: str = "Paper.pdf") -> dict:
     for block in blocks:
         if block["type"] == "heading":
             current = f'section-{block["id"]}'
-            sections.append({"id": current, "title": block["source_text"], "block_id": block["id"], "page": block["page"]})
+            sections.append(
+                {"id": current, "title": block["source_text"], "block_id": block["id"], "page": block["page"]}
+            )
         elif not sections:
             sections.append({"id": current, "title": "论文开篇", "block_id": block["id"], "page": block["page"]})
         block["section_id"] = current
-    return {"schema_version": SCHEMA_VERSION, "fingerprint": digest, "title": title, "page_count": len(pages), "pages": pages, "sections": sections, "blocks": blocks, "warnings": warnings}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "fingerprint": digest,
+        "title": title,
+        "page_count": len(pages),
+        "pages": pages,
+        "sections": sections,
+        "blocks": blocks,
+        "warnings": warnings,
+    }
 
 
 def render_source(pdf_path: str, block: dict, full_page: bool = False) -> bytes:
@@ -150,6 +182,7 @@ def tagged_text(blocks: list[dict]) -> str:
 def validate_evidence(data: object, blocks: list[dict]) -> object:
     """Never accept model-invented page numbers, quotations or unknown anchors."""
     lookup = {b["id"]: b for b in blocks}
+
     def visit(value):
         if isinstance(value, dict):
             result = {k: visit(v) for k, v in value.items() if k != "evidence_refs"}
@@ -161,4 +194,5 @@ def validate_evidence(data: object, blocks: list[dict]) -> object:
         if isinstance(value, list):
             return [visit(v) for v in value]
         return value
+
     return visit(data)

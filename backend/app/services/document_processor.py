@@ -54,6 +54,7 @@ class DocumentProcessor:
             self.task_manager.update_progress(task_id, TaskStatus.PARSING, 10, "正在准备翻译...")
 
         try:
+            translation_records = []
             # 在线程中运行 pdf2zh（同步库）。pdf2zh 的 LLM 配置通过进程级环境变量传入，
             # 已在 __init__ 中设置好，且对所有任务一致，因此无需在每次翻译时加锁切换环境
             # （旧实现会因此把所有并发翻译串行化）。多个翻译可在此并发执行。
@@ -64,6 +65,7 @@ class DocumentProcessor:
                 task_id,
                 mode,
                 asyncio.get_running_loop(),
+                translation_records,
             )
 
             pdf_bytes, output_filename, dual_pdf_bytes = result
@@ -114,6 +116,7 @@ class DocumentProcessor:
                 dual_pdf_bytes=dual_pdf_bytes,
                 preview_html=preview_html,
                 filename=output_filename,
+                translation_records=translation_records,
             )
 
             self.task_manager.set_result(task_id, task_result)
@@ -133,6 +136,7 @@ class DocumentProcessor:
         task_id: str,
         mode: str = "translate",
         ai_loop=None,
+        translation_records=None,
     ) -> tuple[bytes, str, bytes | None]:
         """调用 pdf2zh 进行翻译或简化"""
 
@@ -164,12 +168,17 @@ class DocumentProcessor:
 
             try:
                 # 调用 pdf2zh
-                with pdf2zh_backend(self.config.llm, self.ai, ai_loop) as backend:
+                with pdf2zh_backend(self.config.llm, self.ai, ai_loop, records=translation_records) as backend:
                     results = translate(
-                        files=[str(input_path)], lang_in="en", lang_out=lang_out,
-                        thread=4, output=temp_dir, model=model,
+                        files=[str(input_path)],
+                        lang_in="en",
+                        lang_out=lang_out,
+                        thread=4,
+                        output=temp_dir,
+                        model=model,
                         prompt=SIMPLIFY_PROMPT if mode == "simplify" else None,
-                        ignore_cache=mode == "simplify", **backend,
+                        ignore_cache=mode == "simplify",
+                        **backend,
                     )
 
                 if not results or len(results) == 0:

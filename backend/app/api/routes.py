@@ -43,7 +43,10 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
             async with _semaphore:
                 current = task_manager.get_task(task.task_id)
                 if current and current.status != TaskStatus.CANCELLED:
-                    await processor.process(task.task_id, file_bytes, task.filename, mode=task.mode, highlight=task.highlight)
+                    await processor.process(
+                        task.task_id, file_bytes, task.filename, mode=task.mode, highlight=task.highlight
+                    )
+
         run = create_tracked_task(process())
         running[task.task_id] = run
         run.add_done_callback(lambda _: running.pop(task.task_id, None))
@@ -258,7 +261,9 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
             raise HTTPException(status_code=404, detail="任务不存在")
         if task.user_id != user.id:
             raise HTTPException(status_code=403, detail="无权访问此任务")
-        if task.status != TaskStatus.COMPLETED and not (reading_service is not None and task.original_pdf_path and Path(task.original_pdf_path).exists()):
+        if task.status != TaskStatus.COMPLETED and not (
+            reading_service is not None and task.original_pdf_path and Path(task.original_pdf_path).exists()
+        ):
             raise HTTPException(status_code=400, detail="论文原文尚未准备好")
 
         if reading_service is not None:

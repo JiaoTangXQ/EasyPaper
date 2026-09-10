@@ -35,9 +35,11 @@ services:
       APP_CONFIG_PATH: /app/config/config.yaml
       APP_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-easypaper}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-easypaper}
+      EASYPAPER_READER_LIBRARY_DIR: /app/reader-library
     volumes:
       - ./backend/config:/app/config
       - backend-tmp:/app/tmp
+      - backend-library:/app/reader-library
       - backend-logs:/app/logs
     expose:
       - "8000"
@@ -77,6 +79,7 @@ services:
 volumes:
   pg-data:
   backend-tmp:
+  backend-library:
   backend-logs:
   caddy-data:
   caddy-config:

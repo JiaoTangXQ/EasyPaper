@@ -66,7 +66,12 @@ class TaskManager:
             for state in states:
                 blocks = documents.get(state.task_id, {}).get("blocks", [])
                 current = next((b for b in blocks if b.get("id") == state.block_id), None)
-                result[state.task_id] = {"block_id": state.block_id, "page": current.get("page") if current else None, "understood_count": len(json.loads(state.understood_json)), "updated_at": state.updated_at.isoformat()}
+                result[state.task_id] = {
+                    "block_id": state.block_id,
+                    "page": current.get("page") if current else None,
+                    "understood_count": len(json.loads(state.understood_json)),
+                    "updated_at": state.updated_at.isoformat(),
+                }
             return result
 
     def requeue(self, task_id: str) -> None:
@@ -100,6 +105,12 @@ class TaskManager:
                 file_path = Path(self.config.storage.temp_dir) / f"{task_id}.pdf"
                 file_path.write_bytes(result.pdf_bytes)
                 task.result_pdf_path = str(file_path)
+                if result.translation_records is not None:
+                    import json
+
+                    file_path.with_suffix(".alignment.json").write_text(
+                        json.dumps(result.translation_records, ensure_ascii=False)
+                    )
 
             if result.dual_pdf_bytes:
                 dual_file_path = Path(self.config.storage.temp_dir) / f"{task_id}_dual.pdf"
@@ -205,7 +216,8 @@ class TaskManager:
                 # are temporary and retain the old cleanup behaviour.
                 library_root = Path(self.config.storage.temp_dir).resolve()
                 paths = tuple(
-                    path for path in (task.original_pdf_path, task.result_pdf_path, task.result_dual_pdf_path)
+                    path
+                    for path in (task.original_pdf_path, task.result_pdf_path, task.result_dual_pdf_path)
                     if task.user_id is None or not path or library_root not in Path(path).resolve().parents
                 )
                 for path in paths:

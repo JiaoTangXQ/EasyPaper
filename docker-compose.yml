@@ -6,8 +6,10 @@ services:
       - ./backend/config:/app/config
       - backend-data:/app/data
       - backend-tmp:/app/tmp
+      - backend-library:/app/reader-library
     environment:
       - APP_CONFIG_PATH=/app/config/config.yaml
+      - EASYPAPER_READER_LIBRARY_DIR=/app/reader-library
     ports:
       - "8000:8000"
 
@@ -21,3 +23,4 @@ services:
 volumes:
   backend-data:
   backend-tmp:
+  backend-library:

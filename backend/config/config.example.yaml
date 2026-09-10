@@ -33,6 +33,9 @@ agent:
 storage:
   cleanup_minutes: 30
   temp_dir: "./backend/tmp"
+  # Permanent PDF revisions. Keep this directory and the database in backups.
+  # Empty uses <temp_dir>/reader-library; it is excluded from task cleanup.
+  library_dir: ""
 database:
   url: "sqlite:///./backend/data/app.db"
 logging:

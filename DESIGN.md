@@ -6,7 +6,7 @@ Mode: Read. A quiet document desk: warm paper, dark ink, restrained green naviga
 
 ## First viewport
 
-A compact top navigation, a persistent paper outline, and the actual complete paper page. Language controls and current page are visible. The signature interaction is switching original, translated, or bilingual page streams without losing the active page; full-paper questions are explicit and on demand.
+A compact top navigation and the actual complete paper page. Language controls and current page are visible. The signature interaction is switching original, translated, or bilingual page streams without losing the active page; full-paper questions are explicit and on demand.
 
 ## Typography and layout
 
@@ -18,4 +18,4 @@ Paper #faf9f6; surface #ffffff; ink #242b27; muted #626a65; border #dedfd7; acce
 
 ## States
 
-The original is readable before translation finishes. Pending translation shows one clear document-level progress message. The reader never fills the page with generated placeholders. Search and outline use extracted structure, while the visible reading surface remains the original PDF or generated full-page PDF. Existing export and study functions remain accessible from the workspace.
+The original is readable before translation finishes. Pending translation shows one clear document-level progress message. The reader never fills the page with generated placeholders. The visible reading surface remains the original PDF or generated full-page PDF. Existing export and study functions remain accessible from the workspace.

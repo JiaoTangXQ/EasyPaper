@@ -107,9 +107,7 @@ async def test_submit_ready_draft_creates_task(tmp_path):
     draft_service = TranslationDraftService(session_factory=lambda: Session(engine), temp_dir=tmp_path)
     draft = draft_service.get_draft("dr_exec")
 
-    service = TranslationExecutionService(
-        task_manager=task_manager, processor=processor, draft_service=draft_service
-    )
+    service = TranslationExecutionService(task_manager=task_manager, processor=processor, draft_service=draft_service)
     accepted = await service.submit_draft(draft)
 
     assert accepted.status == "accepted"

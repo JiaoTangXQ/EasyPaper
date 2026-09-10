@@ -12,9 +12,12 @@ import threading
 from contextlib import contextmanager
 
 from .ai_client import AIClient, AIError
+from .pdf_word_layout import word_wrapping_layout
+from .simplification_guard import guarded_simplification, keep_source_label
 
 _INSTALL_LOCK = threading.Lock()
 _CONTEXT_KEY = "__easypaper_codex_executor__"
+_RECORDS_KEY = "__easypaper_translation_records__"
 
 
 class PDFTranslationAbort(BaseException):
@@ -91,22 +94,56 @@ def install_pdf2zh_adapter():
             def __new__(cls, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False):
                 executor = (envs or {}).get(_CONTEXT_KEY)
                 if executor is not None:
-                    return CodexTranslator(lang_in, lang_out, executor, prompt, ignore_cache)
-                return original(lang_in, lang_out, model, envs=envs, prompt=prompt, ignore_cache=ignore_cache)
+                    instance = CodexTranslator(lang_in, lang_out, executor, prompt, ignore_cache)
+                else:
+                    instance = original(lang_in, lang_out, model, envs=envs, prompt=prompt, ignore_cache=ignore_cache)
+                records = (envs or {}).get(_RECORDS_KEY)
+                simplifying = lang_in == lang_out and prompt is not None
+                if records is not None or simplifying:
+                    translate = instance.translate
+                    record_lock = threading.Lock()
+
+                    def recorded_translate(text, *args, **kwargs):
+                        translated = (
+                            text if simplifying and keep_source_label(text) else translate(text, *args, **kwargs)
+                        )
+                        if simplifying:
+                            translated = guarded_simplification(text, translated)
+                        with record_lock:
+                            record = {"source": text, "target": translated}
+                            if hasattr(instance, "_easypaper_page"):
+                                record["page"] = str(instance._easypaper_page)
+                            if records is not None:
+                                records.append(record)
+                        return translated
+
+                    instance.translate = recorded_translate
+                return instance
 
         converter.OpenAIlikedTranslator = Dispatcher
+        receive_layout = converter.TranslateConverter.receive_layout
+        if getattr(converter, "__name__", "") == "pdf2zh.converter":
+            receive_layout = word_wrapping_layout(receive_layout)
+
+        def recorded_layout(self, page):
+            self.translator._easypaper_page = page.pageid
+            return receive_layout(self, page)
+
+        converter.TranslateConverter.receive_layout = recorded_layout
 
 
 @contextmanager
-def pdf2zh_backend(config, ai: AIClient | None = None, loop=None):
+def pdf2zh_backend(config, ai: AIClient | None = None, loop=None, records=None):
     """Called in a PDF worker thread. Standalone callers get an owned event loop."""
     if config.provider == "api":
+        install_pdf2zh_adapter()
         yield {
             "service": "openailiked",
             "envs": {
                 "OPENAILIKED_BASE_URL": config.base_url,
                 "OPENAILIKED_API_KEY": config.api_key,
                 "OPENAILIKED_MODEL": config.model,
+                **({_RECORDS_KEY: records} if records is not None else {}),
             },
         }
         return
@@ -120,7 +157,10 @@ def pdf2zh_backend(config, ai: AIClient | None = None, loop=None):
         ai = AIClient(config)
     executor = CodexTranslationExecutor(ai, loop)
     try:
-        yield {"service": "openailiked", "envs": {_CONTEXT_KEY: executor}}
+        yield {
+            "service": "openailiked",
+            "envs": {_CONTEXT_KEY: executor, **({_RECORDS_KEY: records} if records is not None else {})},
+        }
     finally:
         executor.cancel()
         if owned_loop:
