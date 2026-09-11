@@ -58,7 +58,7 @@ Extract structured knowledge from papers via LLM — stored as portable JSON, ne
 
 ### 4. Knowledge Graph
 
-Interactive force-directed graph visualization of entities and relationships across all your papers. Color-coded by entity type, sized by importance, with search and zoom.
+Explore concepts and relationships across your papers in a diagram with text labels. Focus on one concept at a time, browse its neighbors in groups of eight, and inspect definitions and source papers alongside the graph. Search, type filters, a global view, zoom, and a keyboard-accessible list keep the complete graph available.
 
 ![Knowledge graph of concepts and relationships](imgs/screenshots/knowledge-graph.png)
 
