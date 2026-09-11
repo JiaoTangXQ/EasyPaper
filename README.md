@@ -6,6 +6,8 @@ EasyPaper is a self-hosted web app that helps you read, understand, and retain k
 
 [中文说明](README_zh.md)
 
+![Paper library with original and Chinese titles](imgs/screenshots/library.png)
+
 ---
 
 ## What It Does
@@ -16,11 +18,12 @@ EasyPaper is a self-hosted web app that helps you read, understand, and retain k
 - **English → Simple English** vocabulary simplification (CEFR A2/B1, ~2000 common words)
 - Local PDF upload and direct PDF/arXiv/OpenReview link import
 - PDF-in, PDF-out — figures, equations, and formatting stay intact
-- Clean single-language PDF by default, with a bilingual side-by-side PDF available as a separate download
+- Switch between the original, Chinese, simplified English, and bilingual PDFs in one reader; generate missing versions on demand
+- Fullscreen reading with toolbars that collapse automatically and reappear on hover
 
 ### 2. AI Highlighting
 
-Automatically identifies and color-codes key sentences in the processed PDF. The highlighter now uses backend-generated sentence IDs and PDF coordinates instead of brittle text search, which makes Chinese line breaks and punctuation more reliable.
+AI selects key sentences and assigns a highlight category. Shared text marks are positioned against each version’s own PDF text. The reader shows matching progress and preserves the original annotation when a corresponding passage cannot be confirmed.
 
 | Color | Category | What It Highlights |
 |-------|----------|-------------------|
@@ -28,9 +31,9 @@ Automatically identifies and color-codes key sentences in the processed PDF. The
 | Blue | Method Innovations | Novel approaches and technical contributions |
 | Green | Key Data | Quantitative results, metrics, experimental data |
 
-The reader also includes a filterable highlight panel with page jumps, category counts, and failed-match status.
+The shared annotation panel lets you search excerpts and notes, filter annotation types, jump to passages, and export annotated PDFs.
 
-![AI Highlighting](imgs/img-5.png)
+![HarnessDev with AI-highlighted key sentences](imgs/screenshots/ai-highlights.png)
 
 ### 3. Knowledge Base (Portable)
 
@@ -42,13 +45,22 @@ Extract structured knowledge from papers via LLM — stored as portable JSON, ne
 - **Flashcards**: auto-generated study cards with SM-2 spaced repetition scheduling
 - **Extraction workflow**: start extraction from the reader, track status, and jump to the generated paper page when ready
 
-![Knowledge Base — Paper Detail](imgs/img-2.png)
+![Paper knowledge: findings and evidence](imgs/screenshots/paper-findings.png)
 
-![Knowledge Base — Findings](imgs/img-3.png)
+<details>
+<summary>Concepts, methods, and the knowledge library</summary>
+
+![Concepts and methods extracted from a paper](imgs/screenshots/paper-concepts.png)
+
+![Knowledge library](imgs/screenshots/knowledge-library.png)
+
+</details>
 
 ### 4. Knowledge Graph
 
 Interactive force-directed graph visualization of entities and relationships across all your papers. Color-coded by entity type, sized by importance, with search and zoom.
+
+![Knowledge graph of concepts and relationships](imgs/screenshots/knowledge-graph.png)
 
 ### 5. Multi-Format Export
 
@@ -65,24 +77,106 @@ Your knowledge is yours. Export it in any format:
 
 Local Obsidian sync detects vaults on macOS, Windows, and Linux. You can also paste a vault path manually. A synced paper note includes the generated summary (when available), metadata, section summaries, findings, methods, datasets, entities, relationships, flashcards, and user notes. EasyPaper writes managed paper/entity notes only; the linked `Paper Title - Notes.md` file is not created until you click it in Obsidian. Deleting a paper in EasyPaper does not delete existing Obsidian `.md` files.
 
+<details>
+<summary>Available export actions</summary>
+
+![Knowledge backup, Obsidian, citation, and table exports](imgs/screenshots/knowledge-export.png)
+
+</details>
+
 ### 6. Flashcard Review
 
-Built-in spaced repetition system (SM-2 algorithm) for reviewing auto-generated flashcards. Rate your recall from 0-5, and the system schedules optimal review intervals.
+Review generated flashcards with SM-2 spaced repetition. Reveal the answer, rate your recall, and schedule the next review.
 
-![Flashcard Review](imgs/img-4.png)
+![Flashcard review with answer and recall ratings](imgs/screenshots/flashcard-review.png)
+
+*This review demonstration uses existing paper cards without changing their actual review schedule.*
+
+<details>
+<summary>Generated cards in the paper detail</summary>
+
+![Generated paper flashcards](imgs/screenshots/paper-flashcards.png)
+
+</details>
 
 ---
 
 ## Screenshots
 
-### Translate to Chinese
-![Translate to Chinese](imgs/img-0.png)
+Captured from the current application, with the UI shown in Chinese. The four reading views use the same **Repo-To-Skill** paper and its existing annotations. Open an image to inspect it at full size.
 
-### Simplify English
-![Simplify English](imgs/img-1.png)
+### One paper, four reading views
 
-### Layout-Preserving Technology
-![Layout analysis](imgs/test.png)
+<details open>
+<summary>Chinese translation</summary>
+
+![Repo-To-Skill: Chinese translation and synchronized annotations](imgs/screenshots/reader-chinese.png)
+
+</details>
+
+<details>
+<summary>English original</summary>
+
+![Repo-To-Skill: original text and synchronized annotations](imgs/screenshots/reader-original.png)
+
+</details>
+
+<details>
+<summary>Simplified English</summary>
+
+![Repo-To-Skill: simplified English and synchronized annotations](imgs/screenshots/reader-simple.png)
+
+</details>
+
+<details>
+<summary>Bilingual PDF · facing pages</summary>
+
+![Original and translated pages displayed together in the bilingual PDF](imgs/screenshots/reader-bilingual.png)
+
+</details>
+
+### Reading, annotations, and questions
+
+The floating paper assistant answers questions about the current article without requiring the full text to be pasted again.
+
+![A question answered using the current paper](imgs/screenshots/paper-chat.png)
+
+<details>
+<summary>Shared annotations</summary>
+
+![Search excerpts and inspect annotation matching status](imgs/screenshots/reader-annotations.png)
+
+</details>
+
+<details>
+<summary>Paper overview beside the source</summary>
+
+![Paper text and overview together](imgs/screenshots/reader-overview.png)
+
+</details>
+
+<details>
+<summary>Fullscreen reading · auto-hiding toolbars</summary>
+
+![Fullscreen reading with collapsed controls](imgs/screenshots/reader-fullscreen.png)
+
+</details>
+
+### Sign in and import
+
+<details>
+<summary>Sign-in page</summary>
+
+![Sign-in page with the handwritten wordmark](imgs/screenshots/login.png)
+
+</details>
+
+<details>
+<summary>Import a local PDF or paper link</summary>
+
+![Paper import dialog](imgs/screenshots/import.png)
+
+</details>
 
 ---
 

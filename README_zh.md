@@ -10,6 +10,8 @@ EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并�
 
 [English](README.md)
 
+![论文列表与中英文标题](imgs/screenshots/library.png)
+
 ---
 
 ## 核心功能
@@ -20,11 +22,12 @@ EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并�
 - **英文 → 简单英文** 词汇简化（CEFR A2/B1 级别，约 2000 常用词）
 - 支持本地 PDF 上传，也支持直接粘贴 PDF、arXiv、OpenReview 链接
 - PDF 输入，PDF 输出 — 图表、公式、格式完整保留
-- 默认打开干净的单语 PDF，中英对照版作为单独文件下载
+- 在同一阅读器切换原文、中文译文、简化英语和双语对照；未生成的版本可按需生成
+- 支持全屏阅读，顶部工具栏自动折叠，移入时展开
 
 ### 2. AI 重点高亮
 
-自动识别并用颜色标注 PDF 中的关键句子。现在高亮定位使用后端生成的句子 ID 和 PDF 坐标，不再依赖脆弱的全文搜索，中文跨行和标点差异下更可靠。
+AI 选出论文中的重点句子，按类别着色。文字标记根据各版本 PDF 的实际文字重新定位；阅读器显示匹配进度，无法确认对应内容时保留原始批注并给出提示。
 
 | 颜色 | 分类 | 标注内容 |
 |------|------|---------|
@@ -32,9 +35,9 @@ EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并�
 | 蓝色 | 方法创新 | 新颖方法和技术贡献 |
 | 绿色 | 关键数据 | 定量结果、指标、实验数据 |
 
-阅读器内置可筛选的高亮句子面板，支持按类别过滤、点击跳页、查看分类数量和未定位状态。
+阅读器内置共享批注面板，可搜索摘录和笔记、筛选批注类型、跳转原文，并导出带批注的 PDF。
 
-![AI 重点高亮](imgs/img-5.png)
+![HarnessDev：AI 重点句子高亮](imgs/screenshots/ai-highlights.png)
 
 ### 3. 知识库（可迁移）
 
@@ -46,13 +49,22 @@ EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并�
 - **闪卡**：自动生成的学习卡片，支持 SM-2 间隔重复调度
 - **提取流程**：可在阅读器中发起知识提取、跟踪状态，并在完成后跳转到论文详情页
 
-![知识库 — 论文详情](imgs/img-2.png)
+![论文知识笔记：发现与证据](imgs/screenshots/paper-findings.png)
 
-![知识库 — 研究发现](imgs/img-3.png)
+<details>
+<summary>查看概念与方法、知识笔记列表</summary>
+
+![论文中提取的概念与方法](imgs/screenshots/paper-concepts.png)
+
+![知识笔记列表](imgs/screenshots/knowledge-library.png)
+
+</details>
 
 ### 4. 知识图谱
 
 交互式力导向图谱，可视化所有论文中的实体与关系。按实体类型着色，按重要性调整大小，支持搜索和缩放。
+
+![知识图谱：概念与关系](imgs/screenshots/knowledge-graph.png)
 
 ### 5. 多格式导出
 
@@ -69,24 +81,106 @@ EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并�
 
 本地 Obsidian 同步支持 macOS、Windows、Linux 自动检测 vault，也支持手动填写路径。同步后的论文主笔记会包含已生成的摘要页内容（如有）、论文信息、章节摘要、研究发现、方法、数据集、实体、关系、闪卡和用户笔记。EasyPaper 只写入它管理的论文笔记和实体笔记；主笔记里的 `Paper Title - Notes.md` 是红色链接，用户点击后再由 Obsidian 创建。删除 EasyPaper 里的论文不会删除 Obsidian 中已有的 `.md` 文件。
 
+<details>
+<summary>查看导出入口</summary>
+
+![知识备份、Obsidian、文献引用与表格导出](imgs/screenshots/knowledge-export.png)
+
+</details>
+
 ### 6. 闪卡复习
 
-内置间隔重复系统（SM-2 算法），复习自动生成的闪卡。按 0-5 评分你的记忆效果，系统自动安排最优复习间隔。
+内置间隔重复系统（SM-2 算法），复习自动生成的闪卡。查看答案后评价掌握程度，系统据此安排下一次复习。
 
-![闪卡复习](imgs/img-4.png)
+![闪卡复习：显示答案与掌握程度评分](imgs/screenshots/flashcard-review.png)
+
+*此图以已有论文卡片演示复习流程，未改动真实复习安排。*
+
+<details>
+<summary>查看论文中的已生成卡片</summary>
+
+![论文详情中的复习卡](imgs/screenshots/paper-flashcards.png)
+
+</details>
 
 ---
 
 ## 效果展示
 
-### 翻译为中文
-![翻译为中文](imgs/img-0.png)
+以下图片来自当前版本的实际页面。原文、中文译文、简化英语和双语对照均使用同一篇 **Repo-To-Skill** 论文，展示已有划线在不同版本中的效果。点击图片可查看大图。
 
-### 简化英文
-![简化英文](imgs/img-1.png)
+### 同一篇论文，四种阅读版本
 
-### 保留排版技术
-![排版分析](imgs/test.png)
+<details open>
+<summary>中文译文</summary>
+
+![Repo-To-Skill：中文译文与同步标记](imgs/screenshots/reader-chinese.png)
+
+</details>
+
+<details>
+<summary>英文原文</summary>
+
+![Repo-To-Skill：原文与同步标记](imgs/screenshots/reader-original.png)
+
+</details>
+
+<details>
+<summary>简化英语</summary>
+
+![Repo-To-Skill：简化英语与同步标记](imgs/screenshots/reader-simple.png)
+
+</details>
+
+<details>
+<summary>双语对照 · 并排查看</summary>
+
+![双语 PDF 中的原文页与中文页并排查看](imgs/screenshots/reader-bilingual.png)
+
+</details>
+
+### 阅读、批注与提问
+
+点击右下角「问论文」即可围绕当前文章提问，无需再次粘贴全文。
+
+![根据当前论文回答问题](imgs/screenshots/paper-chat.png)
+
+<details>
+<summary>共享划线与批注面板</summary>
+
+![搜索摘录、查看批注与同步状态](imgs/screenshots/reader-annotations.png)
+
+</details>
+
+<details>
+<summary>正文旁的论文概览</summary>
+
+![论文正文与概览同时查看](imgs/screenshots/reader-overview.png)
+
+</details>
+
+<details>
+<summary>全屏阅读 · 自动隐藏工具栏</summary>
+
+![全屏状态下展开阅读空间](imgs/screenshots/reader-fullscreen.png)
+
+</details>
+
+### 登录与导入
+
+<details>
+<summary>登录页</summary>
+
+![新版登录页与手写品牌字标](imgs/screenshots/login.png)
+
+</details>
+
+<details>
+<summary>导入本地 PDF 或论文链接</summary>
+
+![导入论文对话框](imgs/screenshots/import.png)
+
+</details>
 
 ---
 
