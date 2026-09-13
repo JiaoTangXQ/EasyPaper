@@ -6,6 +6,13 @@ import { Loader2 } from "lucide-react";
 export default function PaperSummary() {
   const { taskId = "" } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  useEffect(() => { navigate(`/reader/${taskId}?panel=summary`, { replace: true }); }, [navigate, taskId]);
-  return <div className="reader-empty"><Loader2 className="spin" size={30} /><p>正在打开论文地图…</p></div>;
+  useEffect(() => {
+    navigate(`/reader/${taskId}?panel=summary`, { replace: true });
+  }, [navigate, taskId]);
+  return (
+    <div className="reader-empty">
+      <Loader2 className="spin" size={30} />
+      <p>正在打开论文地图…</p>
+    </div>
+  );
 }

@@ -14,6 +14,7 @@ export type ReaderVersion = {
   url: string;
   page_count: number;
   origin_pages?: (number | null)[];
+  embedded_annotations?: Record<string, string>;
   fingerprint: string;
   created_at: string;
   pages: { width: number; height: number; rotation: number }[];
@@ -38,6 +39,8 @@ export type SharedAnnotation = {
   revision: number;
   deleted: boolean;
   alignment_status: string;
+  retry_at?: string | null;
+  retry_exhausted?: boolean;
   alignment_message: string;
   updated_at: string;
 };
@@ -183,6 +186,13 @@ export function projectedAnnotations(annotations: SharedAnnotation[], versionId:
     .flatMap((a) => {
       const hydrate = (data: PdfAnnotationObject, suffix: string) => ({
         ...data,
+        // Older native PDFs expose `color`; the viewer's markup renderer reads
+        // `strokeColor`. Normalize both source and projected marks so their
+        // on-screen colors agree with each other and with PDF export.
+        ...([9, 10, 11, 12].includes(data.type) ? {
+          strokeColor: ("strokeColor" in data ? data.strokeColor : undefined)
+            ?? ("color" in data ? data.color : undefined),
+        } : {}),
         id: suffix === "source" ? data.id : `ep_${a.id}_${suffix}`,
         custom: { easyPaperId: a.id },
         created: data.created ? new Date(data.created) : undefined,

@@ -103,3 +103,12 @@ class ReaderPhraseAlignment(SQLModel, table=True):
     document_id: str = Field(foreign_key="readerdocument.id", index=True)
     result_json: str
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReaderAlignmentRetry(SQLModel, table=True):
+    """Retry budget survives closing the reader and restarting the service."""
+
+    annotation_id: str = Field(primary_key=True)
+    signature: str
+    attempts: int = 0
+    next_attempt_at: datetime | None = None

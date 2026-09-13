@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -9,7 +9,8 @@ import {
   Highlighter,
   Link2,
   Loader2,
-  MessageCircleQuestion,
+  Maximize,
+  Minimize,
   RefreshCw,
   Trash2,
   Undo2,
@@ -21,6 +22,7 @@ import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import type { PdfViewerHandle } from "@/components/reader/PdfViewer";
+import PaperChat from "@/components/reader/PaperChat";
 import {
   cacheGet,
   cacheSet,
@@ -30,6 +32,7 @@ import {
   type SharedAnnotation,
 } from "@/components/reader/reader-store";
 import { useSyncedReader } from "@/components/reader/useSyncedReader";
+import { useFullscreenChrome } from "@/components/reader/useFullscreenChrome";
 import "@/components/reader/reader.css";
 
 const PdfViewer = lazy(() => import("@/components/reader/PdfViewer"));
@@ -40,13 +43,8 @@ type Workspace = {
   pdf_message: string;
   paper_id: string;
 };
-type Answer = {
-  answer?: string;
-  reasoning?: string;
-  uncertainty?: string;
-  evidence_refs?: { page: number; quote: string }[];
-};
-const modes: ReaderMode[] = ["chinese", "original", "bilingual", "simple"];
+const modes: ReaderMode[] = ["original", "chinese", "simple", "bilingual"];
+type ReaderPanel = "notes" | "overview";
 
 export default function Reader() {
   const { taskId = "" } = useParams<{ taskId: string }>();
@@ -61,14 +59,20 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [mode, setMode] = useState<ReaderMode>("original");
   const [revision, setRevision] = useState("");
-  const [panel, setPanel] = useState<"notes" | "ask" | null>(searchParams.get("panel") === "summary" ? "ask" : null);
+  const [panel, setPanel] = useState<ReaderPanel | null>(searchParams.get("panel") === "summary" ? "overview" : null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const workspaceElement = useRef<HTMLDivElement>(null);
+  const chrome = useFullscreenChrome(workspaceElement, isFullscreen);
+  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 1000px)").matches);
+  const panelTrigger = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const summaryRequested = useRef(false);
+  const [summaryError, setSummaryError] = useState("");
   const [pdf, setPdf] = useState<{ versionId: string; url: string; page: number } | null>(null);
   const [pdfError, setPdfError] = useState("");
   const [page, setPage] = useState(1);
   const [selection, setSelection] = useState("");
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
-  const [asking, setAsking] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [filter, setFilter] = useState("all");
@@ -94,6 +98,29 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const reopen = reader.reopen;
   const build = bundle?.builds.find((b) => b.kind === mode);
   const isBuilding = generating || build?.status === "running";
+
+  useEffect(() => {
+    const update = () =>
+      setIsFullscreen(
+        Boolean(document.fullscreenElement && workspaceElement.current?.contains(document.fullscreenElement)),
+      );
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (workspaceElement.current?.requestFullscreen) {
+        await workspaceElement.current.requestFullscreen();
+      } else {
+        toast.error("当前浏览器不支持全屏阅读");
+      }
+    } catch {
+      toast.error("未能切换全屏，请重试");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,23 +157,41 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
     return () => window.clearInterval(timer);
   }, [taskId, awaitingResult, reopen]);
 
-  useEffect(() => {
-    if (searchParams.get("panel") !== "summary") return;
-    let cancelled = false;
+  const loadSummary = useCallback(async () => {
+    if (summaryRequested.current) return;
+    summaryRequested.current = true;
     setSummaryLoading(true);
-    void api
-      .post(`/api/reading/${taskId}/summary`)
-      .then(({ data }) => {
-        if (!cancelled) setSummary(data);
-      })
-      .catch((err) => toast.error(getApiErrorMessage(err, "摘要生成失败")))
-      .finally(() => {
-        if (!cancelled) setSummaryLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [taskId, searchParams]);
+    setSummaryError("");
+    try {
+      const { data } = await api.post(`/api/reading/${taskId}/summary`);
+      setSummary(data);
+    } catch (err) {
+      summaryRequested.current = false;
+      setSummaryError(getApiErrorMessage(err, "概览生成失败，请重试。"));
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [taskId]);
+  useEffect(() => {
+    if (panel === "overview") void loadSummary();
+  }, [panel, loadSummary]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1000px)");
+    const update = () => setCompact(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const changePanel = (next: ReaderPanel | null) => {
+    if (next) setChatOpen(false);
+    if (next && !panel)
+      panelTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPanel(next);
+    if (!next) queueMicrotask(() => panelTrigger.current?.focus());
+  };
+  const panelOpen = panel !== null;
+  useEffect(() => {
+    if (compact && panelOpen) panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [compact, panelOpen]);
 
   useEffect(() => {
     if (!versionId || !versionUrl || !pageCount || userId === undefined) {
@@ -251,7 +296,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
     setMode(target.kind);
     setRevision(target.id);
     if (version?.id === target.id) viewerRef.current?.goToPage(nextPage, point);
-    if (window.innerWidth <= 760) setPanel(null);
+    if (compact) changePanel(null);
   };
   const generate = async () => {
     if (!bundle || mode === "original") return;
@@ -263,18 +308,6 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
       toast.error(getApiErrorMessage(err, "生成失败，请重试"));
     } finally {
       setGenerating(false);
-    }
-  };
-  const ask = async () => {
-    if (!question.trim()) return;
-    setAsking(true);
-    setAnswer(null);
-    try {
-      setAnswer((await api.post<Answer>(`/api/reading/${taskId}/ask`, { question, selection })).data);
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, "提问失败，请重试"));
-    } finally {
-      setAsking(false);
     }
   };
   const download = async (path: string, name: string) => {
@@ -346,6 +379,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const filtered = bundle.annotations
     .filter((a) => {
       if (filter === "deleted" ? !a.deleted : a.deleted) return false;
+      if (filter === "unmatched" && a.alignment_status === "matched") return false;
       if (filter === "highlight" && ![9, 10, 11, 12].includes(a.data.type)) return false;
       if (filter === "ink" && ![4, 5, 6, 7, 8, 15].includes(a.data.type)) return false;
       if (filter === "note" && ![1, 3].includes(a.data.type)) return false;
@@ -354,110 +388,169 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   const conflicts = [...new Set(reader.pending.filter((p) => p.conflict).map((p) => p.annotation_id))];
   const matching = active.filter((a) => a.alignment_status === "pending").length;
-  const partial = active.filter((a) => a.alignment_status !== "matched" && a.alignment_status !== "pending").length;
-  const syncing = reader.pending.length > 0 || matching > 0;
+  const retrying = active.filter((a) => a.alignment_status === "partial" && !a.retry_exhausted).length;
+  const partial = active.filter((a) => a.alignment_status === "partial" && a.retry_exhausted).length;
   const saveStatus =
-    reader.saveError ||
-    (reader.pending.length
-      ? `本地已保存 · ${reader.pending.length} 项待上传`
-      : matching
-        ? `已保存到服务器 · 正在自动同步 ${matching} 条批注${partial ? ` · ${partial} 条部分版本待匹配` : ""}`
-        : partial
-          ? `已保存到服务器 · ${partial} 条批注部分版本待匹配，可在批注面板重试`
-          : "已保存到服务器 · 当前版本批注已同步");
+    reader.saveError || (reader.pending.length ? `本地已保存 · ${reader.pending.length} 项待上传` : "已保存到服务器");
+  const matchStatus = matching
+    ? `正在匹配 ${matching} 条批注${retrying ? ` · ${retrying} 条将自动重试` : ""}`
+    : retrying
+      ? `${retrying} 条批注将自动重试`
+      : partial
+        ? `${partial} 条批注的部分内容无法确认对应`
+        : "跨版本匹配完成";
 
   return (
-    <div className="reader-workspace synced-workspace">
-      <header className="reader-topbar synced-topbar">
-        <div className="reader-brand">
-          <Button variant="ghost" size="icon" aria-label="返回文档库" onClick={() => navigate("/dashboard")}>
-            <ArrowLeft size={18} />
-          </Button>
-          <h1 title={workspace?.document.title || bundle.title}>{workspace?.document.title || bundle.title}</h1>
-        </div>
-        <nav className="reader-version-switch" aria-label="阅读版本">
-          {modes.map((item) => (
-            <button key={item} aria-pressed={mode === item} onClick={() => switchMode(item)}>
-              {versionNames[item]}
-              {!bundle.versions.some((v) => v.kind === item) ? (
-                <span className="version-unready">
-                  {bundle.builds.some((b) => b.kind === item && b.status === "running") ? "生成中" : "待生成"}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </nav>
-        <div className="reader-actions">
-          <Button
-            variant={panel === "notes" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setPanel(panel === "notes" ? null : "notes")}
-            aria-expanded={panel === "notes"}
-          >
-            <Highlighter size={16} />
-            批注 {active.length}
-          </Button>
-          <Button
-            variant={panel === "ask" ? "secondary" : "outline"}
-            size="sm"
-            aria-label="全文提问"
-            onClick={() => setPanel(panel === "ask" ? null : "ask")}
-            aria-expanded={panel === "ask"}
-          >
-            <MessageCircleQuestion size={16} />
-            <span className="desktop-label">{selection ? "选文提问" : "全文提问"}</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label="带批注 PDF"
-            disabled={!pdf}
-            onClick={() =>
-              void viewerRef.current?.exportPdf().catch((err) => toast.error(getApiErrorMessage(err, "导出失败")))
-            }
-          >
-            <Download size={16} />
-            <span className="desktop-label">带批注 PDF</span>
-          </Button>
-        </div>
-      </header>
-      <div className="reader-savebar">
-        <span role="status" className={reader.saveError || syncing || partial ? "save-pending" : "save-complete"}>
-          {syncing ? (
-            <Loader2 className="spin" size={13} />
-          ) : partial || reader.saveError ? (
-            <AlertCircle size={13} />
-          ) : (
-            <Check size={13} />
-          )}
-          {saveStatus}
-        </span>
-        <span className="reader-version-detail">
-          {version ? `${versionNames[version.kind]} · 第 ${page} / ${version.page_count} 页` : versionNames[mode]}
-        </span>
-        {currentVersions.length > 1 ? (
-          <select aria-label="文件修订" value={version?.id} onChange={(e) => setRevision(e.target.value)}>
-            {currentVersions.map((v, i) => (
-              <option key={v.id} value={v.id}>
-                {i === 0 ? "最新修订" : "历史修订"} · {new Date(v.created_at + "Z").toLocaleString()}
-              </option>
+    <div
+      ref={workspaceElement}
+      className="reader-workspace synced-workspace"
+      data-fullscreen={isFullscreen || undefined}
+      data-chrome-hidden={(isFullscreen && !chrome.visible) || undefined}
+      style={
+        {
+          "--reader-chrome-height": `${chrome.headerHeight}px`,
+          "--reader-native-chrome-height": `${chrome.toolbarHeight}px`,
+        } as CSSProperties
+      }
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && panel) {
+          event.preventDefault();
+          changePanel(null);
+        }
+      }}
+    >
+      {isFullscreen ? (
+        <button
+          className="reader-chrome-reveal"
+          aria-label="显示阅读工具栏"
+          aria-expanded={chrome.visible}
+          onPointerEnter={chrome.reveal}
+          onFocus={chrome.reveal}
+          onClick={chrome.reveal}
+        />
+      ) : null}
+      <div className="reader-chrome" ref={chrome.chromeRef}>
+        <header className="reader-topbar synced-topbar">
+          <div className="reader-brand">
+            <Button variant="ghost" size="icon" aria-label="返回文档库" onClick={() => navigate("/dashboard")}>
+              <ArrowLeft size={18} />
+            </Button>
+            <h1 title={workspace?.document.title || bundle.title}>{workspace?.document.title || bundle.title}</h1>
+          </div>
+          <nav className="reader-version-switch" aria-label="阅读版本">
+            {modes.map((item) => (
+              <button key={item} aria-pressed={mode === item} onClick={() => switchMode(item)}>
+                {versionNames[item]}
+                {!bundle.versions.some((v) => v.kind === item) ? (
+                  <span className="version-unready">
+                    {bundle.builds.some((b) => b.kind === item && b.status === "running") ? "生成中" : "待生成"}
+                  </span>
+                ) : null}
+              </button>
             ))}
-          </select>
+          </nav>
+          <div className="reader-actions">
+            <Button
+              size="sm"
+              variant={panel === "overview" ? "secondary" : "ghost"}
+              aria-label="论文概览"
+              aria-expanded={panel === "overview"}
+              onClick={() => changePanel(panel === "overview" ? null : "overview")}
+            >
+              <FileText size={16} />
+              <span className="desktop-label">概览</span>
+            </Button>
+            <Button
+              variant={panel === "notes" ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => changePanel(panel === "notes" ? null : "notes")}
+              aria-expanded={panel === "notes"}
+            >
+              <Highlighter size={16} />
+              批注 {active.length}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="带批注 PDF"
+              disabled={!pdf}
+              onClick={() =>
+                void viewerRef.current?.exportPdf().catch((err) => toast.error(getApiErrorMessage(err, "导出失败")))
+              }
+            >
+              <Download size={16} />
+              <span className="desktop-label">带批注 PDF</span>
+            </Button>
+            <Button
+              variant={isFullscreen ? "secondary" : "outline"}
+              size="sm"
+              aria-label={isFullscreen ? "退出全屏" : "全屏阅读"}
+              aria-pressed={isFullscreen}
+              title={isFullscreen ? "退出全屏（Esc）" : "全屏阅读"}
+              onClick={() => void toggleFullscreen()}
+            >
+              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              <span className="desktop-label">{isFullscreen ? "退出全屏" : "全屏"}</span>
+            </Button>
+          </div>
+        </header>
+        <div className="reader-savebar">
+          <div className="reader-persistence" role="status">
+            <span className={reader.saveError || reader.pending.length ? "save-pending" : "save-complete"}>
+              {reader.pending.length ? (
+                <Loader2 className="spin" size={13} />
+              ) : reader.saveError ? (
+                <AlertCircle size={13} />
+              ) : (
+                <Check size={13} />
+              )}
+              {saveStatus}
+            </span>
+            <button
+              className={matching || retrying || partial ? "save-pending" : "save-muted"}
+              onClick={() => {
+                setFilter(matching || retrying || partial ? "unmatched" : "all");
+                changePanel("notes");
+              }}
+            >
+              {matching ? <Loader2 className="spin" size={13} /> : partial ? <AlertCircle size={13} /> : null}
+              {matchStatus}
+            </button>
+          </div>
+          <span className="reader-version-detail">
+            {version ? `${versionNames[version.kind]} · 第 ${page} / ${version.page_count} 页` : versionNames[mode]}
+          </span>
+          {currentVersions.length > 1 ? (
+            <select aria-label="文件修订" value={version?.id} onChange={(e) => setRevision(e.target.value)}>
+              {currentVersions.map((v, i) => (
+                <option key={v.id} value={v.id}>
+                  {i === 0 ? "最新修订" : "历史修订"} · {new Date(v.created_at + "Z").toLocaleString()}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+        {conflicts.length ? (
+          <div className="reader-conflicts" role="alert">
+            {conflicts.map((id) => (
+              <div key={id}>
+                <span>其他窗口修改了同一条批注，本地修改仍保留。</span>
+                <button onClick={() => void reader.resolveConflict(id, true)}>将本地修改另存一份</button>
+                <button onClick={() => void reader.resolveConflict(id, false)}>采用服务器版本</button>
+              </div>
+            ))}
+          </div>
         ) : null}
       </div>
-      {conflicts.length ? (
-        <div className="reader-conflicts" role="alert">
-          {conflicts.map((id) => (
-            <div key={id}>
-              <span>其他窗口修改了同一条批注，本地修改仍保留。</span>
-              <button onClick={() => void reader.resolveConflict(id, true)}>将本地修改另存一份</button>
-              <button onClick={() => void reader.resolveConflict(id, false)}>采用服务器版本</button>
-            </div>
-          ))}
-        </div>
-      ) : null}
       <div className={`reader-layout ${panel ? "ask-open" : ""}`}>
-        <main className="pdf-reading" aria-label="论文阅读区">
+        <main
+          className="pdf-reading"
+          aria-label="论文阅读区"
+          ref={(node) => {
+            node?.toggleAttribute("inert", compact && panelOpen);
+          }}
+          aria-hidden={(compact && panelOpen) || undefined}
+        >
           <div className="pdf-frame-wrap">
             {!version ? (
               <div className="pdf-empty">
@@ -497,7 +590,19 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   src={pdf.url}
                   versionId={version.id}
                   initialPage={pdf.page}
+                  onReady={() => {
+                    const destination = requestedJump.current;
+                    if (destination?.versionId === version.id) {
+                      viewerRef.current?.goToPage(destination.page, destination.point);
+                      requestedJump.current = undefined;
+                    }
+                  }}
                   annotations={bundle.annotations}
+                  embeddedAnnotations={version.embedded_annotations}
+                  fullscreen={isFullscreen}
+                  chromeVisible={chrome.visible}
+                  onToolbarHeight={chrome.setToolbarHeight}
+                  onToolbarInteraction={chrome.holdForMenu}
                   onPageChange={onPageChange}
                   onSelection={setSelection}
                   onChange={(id, data, deleted, geometry) => reader.change(id, version.id, data, deleted, geometry)}
@@ -512,13 +617,34 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
           </div>
         </main>
         {panel ? (
-          <aside className="assistant-panel reader-sidepanel" aria-label={panel === "notes" ? "共享批注" : "论文提问"}>
+          <aside
+            ref={panelRef}
+            className="assistant-panel reader-sidepanel"
+            aria-label={panel === "notes" ? "共享批注" : "论文概览"}
+          >
             <div className="assistant-head">
-              <h2>{panel === "notes" ? "共享批注" : "论文提问"}</h2>
-              <button onClick={() => setPanel(null)} aria-label={panel === "notes" ? "关闭批注" : "关闭提问"}>
+              <h2>{panel === "notes" ? "共享批注" : "论文概览"}</h2>
+              <button onClick={() => changePanel(null)} aria-label={panel === "notes" ? "关闭批注" : "关闭概览"}>
                 <X size={18} />
               </button>
             </div>
+            <nav className="reader-panel-tabs" aria-label="阅读辅助类型">
+              {(
+                [
+                  ["overview", "概览"],
+                  ["notes", "批注"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  aria-label={`查看${label}`}
+                  aria-pressed={panel === value}
+                  onClick={() => changePanel(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
             {panel === "notes" ? (
               <>
                 <div className="annotation-filters">
@@ -530,6 +656,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   />
                   <select aria-label="批注类型" value={filter} onChange={(e) => setFilter(e.target.value)}>
                     <option value="all">全部批注</option>
+                    <option value="unmatched">跨版本待匹配</option>
                     <option value="highlight">文字标记</option>
                     <option value="note">笔记</option>
                     <option value="ink">手写与圈画</option>
@@ -559,7 +686,15 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   ) : (
                     <div className="annotation-empty">
                       <Highlighter size={26} />
-                      <p>{filter === "deleted" ? "没有已删除的批注" : "选中文字添加高亮，或用工具栏在页面上圈画。"}</p>
+                      <p>
+                        {filter === "deleted"
+                          ? "没有已删除的批注"
+                          : filter === "unmatched"
+                            ? "没有待匹配的批注"
+                            : query
+                              ? "没有匹配的批注，试试其他关键词。"
+                              : "选中文字添加高亮，或用工具栏在页面上圈画。"}
+                      </p>
                       <p>批注会自动保存。无法定位的版本可选中文字后手动关联。</p>
                     </div>
                   )}
@@ -609,6 +744,14 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
               </>
             ) : (
               <div className="assistant-body">
+                {summaryError && (
+                  <div role="alert" className="space-y-3">
+                    <p>{summaryError}</p>
+                    <Button variant="outline" onClick={() => void loadSummary()}>
+                      重新生成概览
+                    </Button>
+                  </div>
+                )}
                 {summaryLoading ? (
                   <p>
                     <Loader2 className="spin" size={16} />
@@ -638,65 +781,36 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                     )}
                   </div>
                 ) : null}
-                <p className="assistant-note">在 PDF 中选中文字，会自动带入提问。回答仍以原始论文为依据。</p>
-                <label className="reader-field">
-                  选中的内容
-                  <textarea
-                    value={selection}
-                    onChange={(e) => setSelection(e.target.value)}
-                    placeholder="可选：选择或粘贴一段内容"
-                  />
-                </label>
-                <label className="reader-field">
-                  问题
-                  <textarea
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    placeholder="例如：这个结果有哪些限制？"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void ask();
-                    }}
-                  />
-                </label>
-                <Button onClick={() => void ask()} disabled={asking || !question.trim()}>
-                  {asking ? <Loader2 className="spin" size={16} /> : <MessageCircleQuestion size={16} />}提问
-                </Button>
-                {answer ? (
-                  <div className="answer">
-                    <h3>回答</h3>
-                    <p>{answer.answer}</p>
-                    {answer.reasoning ? (
-                      <>
-                        <h4>依据</h4>
-                        <p>{answer.reasoning}</p>
-                      </>
-                    ) : null}
-                    {answer.uncertainty ? <p className="uncertainty">{answer.uncertainty}</p> : null}
-                    {answer.evidence_refs?.map((reference, i) => (
-                      <button
-                        className="reader-evidence"
-                        key={i}
-                        onClick={() => {
-                          const original = bundle.versions.find((v) => v.kind === "original");
-                          if (original) {
-                            requestedJump.current = { versionId: original.id, page: reference.page };
-                            positions.current.set(original.id, reference.page);
-                            setMode("original");
-                            setRevision("");
-                            if (version?.id === original.id) viewerRef.current?.goToPage(reference.page);
-                          }
-                        }}
-                      >
-                        原文第 {reference.page} 页：{reference.quote.slice(0, 100)}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             )}
           </aside>
         ) : null}
       </div>
+      <PaperChat
+        taskId={taskId}
+        portalContainer={isFullscreen ? workspaceElement.current : undefined}
+        title={workspace?.document.title || bundle.title}
+        selection={selection}
+        clearSelection={() => setSelection("")}
+        open={chatOpen}
+        onOpenChange={(next) => {
+          setChatOpen(next);
+          if (next) setPanel(null);
+        }}
+        onSource={(sourcePage) => {
+          const original = bundle.versions.find((item) => item.kind === "original");
+          if (!original || !Number.isInteger(sourcePage) || sourcePage < 1 || sourcePage > original.page_count) {
+            toast.error("该原文位置暂不可用。");
+            return;
+          }
+          requestedJump.current = { versionId: original.id, page: sourcePage };
+          positions.current.set(original.id, sourcePage);
+          setMode("original");
+          setRevision("");
+          if (version?.id === original.id) viewerRef.current?.goToPage(sourcePage);
+          if (compact) setChatOpen(false);
+        }}
+      />
     </div>
   );
 }

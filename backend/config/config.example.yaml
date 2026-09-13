@@ -15,7 +15,10 @@ llm:
 processing:
   max_pages: 100
   max_upload_mb: 50
-  max_concurrent: 3
+  max_concurrent: 3 # Concurrent document jobs.
+  # Paragraph requests per document (1–16). Lower this if the API rate-limits requests.
+  # The Codex provider also observes llm.codex.max_concurrent.
+  translation_threads: 8
   preview_html: true
 security:
   secret_key: "CHANGE_THIS_TO_A_SECURE_SECRET_KEY"

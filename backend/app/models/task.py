@@ -69,3 +69,11 @@ class Task(SQLModel, table=True):
     def result(self) -> TaskResult:
         # Note: pdf_bytes is None here because we don't load it from disk automatically
         return TaskResult(pdf_bytes=None, preview_html=self.result_preview_html, filename=f"simplified_{self.filename}")
+
+
+class TaskTitleTranslation(SQLModel, table=True):
+    """A cached Chinese subtitle, invalidated when its original title changes."""
+
+    task_id: str = Field(primary_key=True)
+    source_title: str
+    title_zh: str

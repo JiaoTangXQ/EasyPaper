@@ -1,8 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-:root { --paper:#faf9f6; --surface:#fff; --ink:#242b27; --muted:#66706a; --line:#dedfd7; --accent:#28614b; --accent-soft:#e8f0eb; }
-* { box-sizing:border-box; } body { margin:0; background:var(--paper); color:var(--ink); } button,input,textarea { font:inherit; } button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px solid #9bc7ad; outline-offset:2px; }
+:root { --paper:#f7f7f5; --surface:#fff; --ink:#191817; --muted:#6b6864; --line:#deddd8; --accent:#bd392b; --accent-soft:#f9eeeb; }
+* { box-sizing:border-box; } body { margin:0; background:var(--paper); color:var(--ink); } button,input,textarea { font:inherit; } button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
 .reader-workspace { display:flex; flex-direction:column; height:100dvh; color:var(--ink); }.reader-main { padding:0; }
 .reader-topbar { position:relative; z-index:20; display:flex; flex:0 0 auto; gap:1rem; align-items:center; justify-content:space-between; min-height:4.2rem; padding:.7rem clamp(1rem,3vw,2.5rem); background:rgba(250,249,246,.97); border-bottom:1px solid var(--line); }
 .reader-brand,.reader-controls,.mode-switch,.reader-zoom { display:flex; align-items:center; }.reader-brand { min-width:0; gap:.6rem; }.reader-brand h1 { max-width:min(42vw,45rem); margin:0; overflow:hidden; font:600 1rem/1.25 Georgia,serif; text-overflow:ellipsis; white-space:nowrap; }.reader-kicker { margin:0 0 .15rem; color:var(--muted); font:600 .66rem/1.1 ui-sans-serif,system-ui; letter-spacing:.12em; text-transform:uppercase; }.reader-controls { gap:.55rem; }

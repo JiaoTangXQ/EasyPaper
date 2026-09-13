@@ -89,3 +89,18 @@ def test_apply_highlights_counts_unknown_sentence_ids_as_failed_matches():
     assert stats.failed_matches == 1
     assert applied == []
     assert annotations == []
+
+
+def test_ai_highlight_ids_are_unique_across_pages_and_repeated_runs():
+    service = HighlightService(api_key="test", model="test")
+    with fitz.open() as doc:
+        for text in ("Our method reduces memory use by thirty percent.", "Experiments show better accuracy."):
+            doc.new_page().insert_text((50, 100), text)
+        candidates = service._extract_sentence_candidates(doc)
+        selections = [HighlightSelection(c.sentence_id, "method_innovation") for c in candidates]
+        # Completion order is arbitrary, and an input may already contain AI marks.
+        service._apply_highlights(doc, candidates, list(reversed(selections)))
+        service._apply_highlights(doc, candidates, selections)
+        ids = [a.info["id"] for page in doc for a in page.annots()]
+    assert len(ids) == 4
+    assert len(set(ids)) == len(ids)

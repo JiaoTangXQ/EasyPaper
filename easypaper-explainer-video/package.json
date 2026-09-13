@@ -1,0 +1,11 @@
+{
+  "name": "easypaper-explainer-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.6.38 preview",
+    "check": "npx --yes hyperframes@0.6.38 lint && npx --yes hyperframes@0.6.38 validate && npx --yes hyperframes@0.6.38 inspect",
+    "render": "npx --yes hyperframes@0.6.38 render",
+    "publish": "npx --yes hyperframes@0.6.38 publish"
+  }
+}

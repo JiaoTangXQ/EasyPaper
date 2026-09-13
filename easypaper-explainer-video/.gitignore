@@ -1,0 +1,10 @@
+# Preview caches and rendered outputs.
+.thumbnails/
+.waveform-cache/
+renders/
+preview-studio.png
+node_modules/
+
+# Intermediate audio; the composition uses assets/narration.wav.
+assets/narration-segments/
+assets/narration.aiff

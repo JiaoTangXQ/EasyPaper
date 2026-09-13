@@ -14,6 +14,27 @@ def normalized(text: str) -> str:
     return "".join(c for c in value if not c.isspace() and c not in "\u00ad\u200b").casefold()
 
 
+def written_numbers(text: str) -> set[str]:
+    """Recognize spelled-out 0–99 when checking a literal in the other language.
+
+    Do not require every occurrence of 'one' to become a numeral in translation.
+    This only validates otherwise missing/unexpected digit literals.
+    """
+    small = dict(
+        zip(
+            "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split(),
+            range(20),
+            strict=True,
+        )
+    )
+    tens = dict(zip("twenty thirty forty fifty sixty seventy eighty ninety".split(), range(20, 100, 10), strict=True))
+    words = {**small, **tens}
+    pattern = (
+        r"\b(" + "|".join(tens) + r")(?:[ -]+(" + "|".join(list(small)[1:10]) + r"))?\b|\b(" + "|".join(small) + r")\b"
+    )
+    return {str(words[m[1]] + small.get(m[2], 0) if m[1] else small[m[3]]) for m in re.finditer(pattern, text.lower())}
+
+
 CONNECTIVES = {
     "而": ("and", "but", "whereas", "while", "yet"),
     "但": ("but", "yet"),
@@ -160,14 +181,81 @@ def selection(index: dict, annotation: dict) -> tuple[str, list[str]]:
     return " ".join(p["quote"] for p in parts), [p["unit_id"] for p in parts]
 
 
-def text_anchor(unit: dict, quote: str) -> dict:
+def _ligature_tail(chars: list[dict], i: int) -> bool:
+    if i == 0:
+        return False
+    char, previous = chars[i], chars[i - 1]
+    b, prior = char.get("b"), previous.get("b")
+    return bool(
+        b
+        and prior
+        and re.fullmatch(r"[a-zA-Z]", char["c"])
+        and re.fullmatch(r"[a-zA-Z]", previous["c"])
+        and abs(b[2] - b[0]) < 0.001
+        and abs(b[0] - prior[2]) < 0.01
+        and abs(b[1] - prior[1]) < 0.01
+        and abs(b[3] - prior[3]) < 0.01
+    )
+
+
+def _complete_ligature_quote(unit: dict, quote: str) -> str:
+    """Repair only text omitted from a proven zero-width ligature continuation."""
+    needle = normalized(quote)
+    if not needle or needle in normalized(unit["text"]):
+        return quote
+    chars = unit.get("chars", [])
+    value, offsets, optional = "", [], []
+    for i, char in enumerate(chars):
+        chunk = normalized(char["c"])
+        value += chunk
+        offsets.extend([i] * len(chunk))
+        optional.extend([_ligature_tail(chars, i)] * len(chunk))
+    matches = set()
+    for start in range(len(value)):
+        if value[start] != needle[0] or optional[start]:
+            continue
+        positions = {start}
+        for letter in needle:
+            following = set()
+            for position in positions:
+                while position < len(value):
+                    if value[position] == letter:
+                        following.add(position + 1)
+                    if not optional[position]:
+                        break
+                    position += 1
+            positions = following
+            if not positions:
+                break
+        for end in positions:
+            while end < len(value) and optional[end]:
+                end += 1
+            matches.add((start, end))
+        if len(matches) > 1:
+            return quote
+    if len(matches) != 1:
+        return quote
+    start, end = matches.pop()
+    left, right = offsets[start], offsets[end - 1] + 1
+    return "".join(c["c"] for c in chars[left:right])
+
+
+def text_anchor(unit: dict, quote: str, units: list[dict] | None = None) -> dict:
     """Persist text and neighboring content; renderer coordinates are disposable."""
+    quote = _complete_ligature_quote(unit, quote)
     text, needle = normalized(unit["text"]), normalized(quote)
     if not needle or text.count(needle) != 1:
-        return {"text": quote}
+        return {"text": quote, **({"schema": 3} if units is not None else {})}
     start = text.index(needle)
     end = start + len(needle)
-    return {"text": quote, "prefix": text[max(0, start - 48) : start], "suffix": text[end : end + 48]}
+    before, after = text[:start], text[end:]
+    if units is not None:
+        page_units = [u for u in units if u["page"] == unit["page"]]
+        position = next((i for i, u in enumerate(page_units) if u["id"] == unit["id"]), None)
+        if position is not None:
+            before = "".join(normalized(u["text"]) for u in page_units[:position]) + before
+            after += "".join(normalized(u["text"]) for u in page_units[position + 1 :])
+    return {"text": quote, "prefix": before[-48:], "suffix": after[:48], **({"schema": 3} if units is not None else {})}
 
 
 def selection_context(sentence: str, selected: str) -> dict:
@@ -217,7 +305,7 @@ def reanchor_text_parts(parts: list[dict], units: list[dict]) -> list[dict]:
                 "quote": part["quote"],
                 "rects": boxes,
                 "method": "revision-text",
-                "text_anchor": text_anchor(unit, part["quote"]),
+                "text_anchor": text_anchor(unit, part["quote"], units),
             }
         )
     return result
@@ -229,11 +317,16 @@ def selection_parts(index: dict, annotation: dict) -> list[dict]:
     for unit in index["units"]:
         if unit["page"] != annotation["pageIndex"]:
             continue
-        chars = [
-            c
-            for c in unit["chars"]
-            if c["b"] and any(b.contains((fitz.Rect(c["b"]).tl + fitz.Rect(c["b"]).br) / 2) for b in boxes)
-        ]
+        chars = []
+        previous_selected = False
+        for i, char in enumerate(unit["chars"]):
+            selected = bool(
+                char["b"] and any(b.contains((fitz.Rect(char["b"]).tl + fitz.Rect(char["b"]).br) / 2) for b in boxes)
+            )
+            selected = selected or (previous_selected and _ligature_tail(unit["chars"], i))
+            if selected:
+                chars.append(char)
+            previous_selected = selected
         text = "".join(c["c"] for c in chars).strip()
         if any(c.isalnum() for c in text):
             parts.append(
@@ -244,14 +337,14 @@ def selection_parts(index: dict, annotation: dict) -> list[dict]:
                     "rects": char_rects(chars),
                     "method": "source",
                     "context": unit["text"],
-                    "text_anchor": text_anchor(unit, text),
+                    "text_anchor": text_anchor(unit, text, index["units"]),
                 }
             )
     return parts
 
 
 def copied_projection(source: dict, target: dict, annotation: dict) -> list[dict]:
-    """Copy only pages with identical text AND character positions, not page numbers alone."""
+    """Reuse identical pages, re-grounding text when their font metrics differ."""
     page = annotation["pageIndex"]
 
     def signature(index, number):
@@ -271,7 +364,23 @@ def copied_projection(source: dict, target: dict, annotation: dict) -> list[dict
     for number, size in enumerate(target["pages"]):
         if origin is not None and target.get("origin_pages", [None] * len(target["pages"]))[number] != origin:
             continue
-        if size != source["pages"][page] or signature(target, number) != before:
+        after = signature(target, number)
+        if size != source["pages"][page]:
+            continue
+        if after != before:
+            # A saved mono PDF and its bilingual copy can use different font
+            # metrics. Identical page text still establishes correspondence,
+            # but the rectangles must come from the target's own characters.
+            if annotation.get("type", 9) not in {9, 10, 11, 12} or "".join(c for c, _ in before) != "".join(
+                c for c, _ in after
+            ):
+                continue
+            parts = reanchor_text_parts(
+                selection_parts(source, annotation), [u for u in target["units"] if u["page"] == number]
+            )
+            for part in parts:
+                part["method"] = "identical-page-text"
+            result.extend(parts)
             continue
         parts = selection_parts(target, {**annotation, "pageIndex": number})
         for part in parts:

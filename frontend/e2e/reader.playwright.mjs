@@ -79,7 +79,7 @@ test('four versions, native export, offline recovery, conflicts, ink, undo and m
   await page.request.post('http://127.0.0.1:18080/fixture/alignment?paused=true');
   await drawLine(page, '高亮', [54, 103], [278, 103]);
   await expect.poll(async () => (await bundle(page)).annotations.filter(a => !a.deleted).length).toBe(1);
-  await expect(page.getByRole('status').first()).toContainText('正在自动同步 1 条批注');
+  await expect(page.getByRole('status').first()).toContainText('正在匹配 1 条批注');
   await page.getByRole('button', { name: '原文', exact: true }).click();
   await rendered(page);
   expect((await exportedAnnotations(page, testInfo, 'original-pending')).filter(a => a.type === 'Highlight')).toHaveLength(0);
@@ -87,7 +87,7 @@ test('four versions, native export, offline recovery, conflicts, ink, undo and m
   await expect.poll(async () => (await bundle(page)).annotations[0].alignment_status).toBe('matched');
   // The existing viewer must receive the new projection without a reload or retry.
   await expect.poll(async () => (await exportedAnnotations(page, testInfo, 'original-auto-synced')).filter(a => a.type === 'Highlight').length).toBe(1);
-  await expect(page.getByRole('status').first()).toContainText('当前版本批注已同步');
+  await expect(page.getByRole('status').first()).toContainText('跨版本匹配完成');
   expect(retries).toEqual([]);
   await expect(page.getByRole('button', { name: '批注 1', exact: true })).toBeVisible();
   for (const [name, count] of [['中文译文', 1], ['原文', 1], ['简化英语', 1], ['双语对照', 2]]) {
@@ -264,4 +264,185 @@ test('cross-version marks are drawn from target text even when stored coordinate
     const r=await document.querySelector('embedpdf-container').registry;
     return r.getPlugin('annotation').provides().getAnnotations().find(a=>a.object.custom?.easyPaperId==='text-location-fixture')?.object.rect.origin.y;
   })).toBeLessThan(150);
+});
+
+test('overview, questions, and mobile annotations keep the same mounted PDF', async ({ page }) => {
+  let requests = 0;
+  await page.route('**/api/reading/reader-fixture/summary', async route => {
+    requests++;
+    await route.fulfill({ json: { one_liner: '用于检查概览面板的示例摘要', story: { problem: { text: '检查界面切换是否保留 PDF。' } } } });
+  });
+  await open(page);
+  await page.evaluate(() => { window.readerBeforePanel = document.querySelector('embedpdf-container'); });
+  await page.getByRole('button',{name:'论文概览',exact:true}).click();
+  await expect(page.getByText('用于检查概览面板的示例摘要')).toBeVisible();
+  await expect(page.getByRole('textbox',{name:'问题',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'打开论文对话',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'问题',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'关闭论文对话',exact:true}).click();
+  await page.getByRole('button',{name:'论文概览',exact:true}).click();
+  expect(requests).toBe(1);
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.getByRole('complementary',{name:'论文概览'})).toBeVisible();
+  await expect(page.locator('.pdf-reading')).toHaveAttribute('inert','');
+  await page.getByRole('button',{name:'关闭概览',exact:true}).click();
+  await expect(page.locator('.pdf-reading')).not.toHaveAttribute('inert','');
+  await rendered(page);
+  expect(await page.evaluate(() => window.readerBeforePanel === document.querySelector('embedpdf-container'))).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('source and annotation jumps reveal their target pages under compact assistance panels', async ({ page }, testInfo) => {
+  await page.route(/\/api\/reader\/(?:tasks\/reader-fixture|documents\/[^/]+)$/, async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    const original = data.versions.find(v => v.kind === 'original');
+    const rect = {origin:{x:54,y:95},size:{width:150,height:20}};
+    data.annotations = [{id:'jump-fixture',document_id:data.document_id,source_version_id:original.id,
+      quote:'查看第一页的原标记',revision:1,deleted:false,alignment_status:'matched',alignment_message:'已匹配',
+      updated_at:'2026-09-10T00:00:00',anchors:[],projections:{},
+      data:{id:'jump-source',type:9,pageIndex:0,rect,segmentRects:[rect],strokeColor:'#ffff00',opacity:0.5}}];
+    await route.fulfill({response,json:data});
+  });
+  await page.route('**/api/reading/reader-fixture/ask', route => route.fulfill({json:{answer:'请核查第二页的条件。',evidence_refs:[{page:2,quote:'第二页来源示例'}]}}));
+  await page.setViewportSize({width:390,height:844});
+  await open(page);
+  await page.getByRole('button',{name:'打开论文对话',exact:true}).click();
+  await page.getByRole('textbox',{name:'问题',exact:true}).fill('这个结果有哪些条件？');
+  await page.getByRole('button',{name:'发送问题',exact:true}).click();
+  await page.getByRole('button',{name:'原文第 2 页',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'EasyPaper 论文助手'})).toHaveCount(0);
+  await expect(page.locator('.pdf-reading')).toBeVisible();
+  await expect(page.locator('.pdf-reading')).not.toHaveAttribute('inert','');
+  await expect(page.locator('.reader-version-detail')).toContainText('原文 · 第 2 / 2 页');
+  await page.screenshot({path:testInfo.outputPath('source-jump-mobile.png')});
+
+  await page.setViewportSize({width:900,height:900});
+  await page.getByRole('button',{name:'批注 1',exact:true}).click();
+  await expect(page.locator('.pdf-reading')).toHaveAttribute('inert','');
+  await page.getByRole('button',{name:'查看原标记',exact:true}).click();
+  await expect(page.getByRole('complementary',{name:'共享批注'})).toHaveCount(0);
+  await expect(page.locator('.pdf-reading')).toBeVisible();
+  await expect(page.locator('.pdf-reading')).not.toHaveAttribute('inert','');
+  await expect(page.locator('.reader-version-detail')).toContainText('原文 · 第 1 / 2 页');
+  await page.screenshot({path:testInfo.outputPath('annotation-jump-tablet.png')});
+
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'打开论文对话',exact:true}).click();
+  await page.getByRole('button',{name:'原文第 2 页',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'EasyPaper 论文助手'})).toBeVisible();
+  await expect(page.locator('.pdf-reading')).not.toHaveAttribute('inert','');
+  await expect(page.locator('.reader-version-detail')).toContainText('原文 · 第 2 / 2 页');
+});
+
+test('floating paper chat preserves the PDF, conversation, drafts, retries, and paper scope', async ({ page }, testInfo) => {
+  const sent = [];
+  let releaseFirst;
+  const firstAnswer = new Promise(resolve => { releaseFirst = resolve; });
+  await page.route('**/api/reading/reader-fixture/ask', async route => {
+    sent.push(route.request().postDataJSON());
+    if (sent.length === 1) await firstAnswer;
+    if (sent.length === 2) return route.fulfill({status:503,json:{detail:'暂时无法回答，请重试。'}});
+    await route.fulfill({json:{answer:sent.length === 1 ? '论文通过复用中间状态减少内存占用。' : '实验只使用了一个数据集，仍需验证其他场景。',evidence_refs:[{page:2,quote:'The evaluation uses one dataset.'}]}});
+  });
+  await open(page);
+  const originalBounds = await page.locator('.pdf-reading').boundingBox();
+  await page.evaluate(() => { window.readerBeforeChat = document.querySelector('embedpdf-container'); });
+  await expect(page.getByRole('button',{name:'全文提问',exact:true})).toHaveCount(0);
+  await page.screenshot({path:testInfo.outputPath('chat-launcher-desktop.png')});
+  await page.getByRole('button',{name:'打开论文对话',exact:true}).click();
+  const dialog = page.getByRole('dialog',{name:'EasyPaper 论文助手'});
+  const composer = dialog.getByRole('textbox',{name:'问题',exact:true});
+  await expect(dialog).toContainText('当前论文');
+  await expect(dialog.getByRole('textbox')).toHaveCount(1);
+  await expect(composer).toBeFocused();
+  expect(await page.locator('.pdf-reading').boundingBox()).toEqual(originalBounds);
+  await dialog.evaluate(async () => { await Promise.allSettled(document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).map(a => a.finished)); });
+  await page.screenshot({path:testInfo.outputPath('chat-empty-desktop.png')});
+  await composer.fill('这个方法如何减少内存占用？');
+  await composer.dispatchEvent('keydown',{key:'Enter',code:'Enter',isComposing:true});
+  expect(sent).toHaveLength(0);
+  await composer.press('Enter');
+  await expect(dialog.getByText('正在结合论文回答…')).toBeVisible();
+  await dialog.getByRole('button',{name:'关闭论文对话'}).click();
+  expect(await page.locator('.pdf-reading').boundingBox()).toEqual(originalBounds);
+  await page.getByRole('button',{name:'打开论文对话'}).click();
+  await expect(dialog.getByText('正在结合论文回答…')).toBeVisible();
+  releaseFirst();
+  await expect(dialog.getByText('论文通过复用中间状态减少内存占用。')).toBeVisible();
+  expect(sent[0]).toEqual({question:'这个方法如何减少内存占用？',selection:'',history:[]});
+  await composer.fill('那它有什么限制？');
+  await composer.press('Escape');
+  await expect(page.getByRole('button',{name:'打开论文对话'})).toBeFocused();
+  await page.getByRole('button',{name:'打开论文对话'}).click();
+  await expect(composer).toHaveValue('那它有什么限制？');
+  await composer.press('Enter');
+  await expect(dialog.getByText('暂时无法回答，请重试。')).toBeVisible();
+  expect(sent[1].history).toEqual([{role:'user',content:'这个方法如何减少内存占用？'},{role:'assistant',content:'论文通过复用中间状态减少内存占用。'}]);
+  await dialog.getByRole('button',{name:'重试回答'}).click();
+  await expect(dialog.getByText('实验只使用了一个数据集，仍需验证其他场景。')).toBeVisible();
+  expect(sent[2]).toEqual(sent[1]);
+  await expect(dialog.getByText('那它有什么限制？',{exact:true})).toHaveCount(1);
+  expect(await page.evaluate(() => window.readerBeforeChat === document.querySelector('embedpdf-container'))).toBe(true);
+  expect(await page.locator('.pdf-reading').boundingBox()).toEqual(originalBounds);
+  await page.screenshot({path:testInfo.outputPath('chat-conversation-desktop.png')});
+  for (const width of [320,390,768,1024]) {
+    await page.setViewportSize({width,height:844});
+    await dialog.evaluate(async () => { await Promise.allSettled(document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).map(a => a.finished)); });
+    const bounds = await dialog.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if (width === 390) await page.screenshot({path:testInfo.outputPath('chat-conversation-mobile.png')});
+  }
+  await page.setViewportSize({width:390,height:844});
+  await page.evaluate(() => { Object.defineProperty(window.visualViewport,'height',{configurable:true,get:()=>360}); window.visualViewport.dispatchEvent(new Event('resize')); });
+  await expect.poll(async () => { const b=await composer.boundingBox(); return b.y+b.height; }).toBeLessThanOrEqual(360);
+  await page.evaluate(() => { delete window.visualViewport.height; window.visualViewport.dispatchEvent(new Event('resize')); });
+  // Landscape keyboards must leave both the close control and composer reachable.
+  await page.setViewportSize({width:844,height:390});
+  await page.evaluate(async () => {
+    Object.defineProperty(window.visualViewport,'height',{configurable:true,get:()=>180});
+    window.visualViewport.dispatchEvent(new Event('resize'));
+    const registry=await document.querySelector('embedpdf-container').registry;
+    const documentId=registry.getPlugin('document-manager').provides().getActiveDocumentId();
+    registry.getPlugin('selection').textRetrieved$.emit(documentId,['引用片段'.repeat(2000)]);
+  });
+  await expect(dialog.getByRole('button',{name:'移除引用选文'})).toBeVisible();
+  for (const target of [dialog,composer,dialog.getByRole('button',{name:'关闭论文对话'}),dialog.getByRole('button',{name:'发送问题'})]) {
+    await expect.poll(async () => { const b=await target.boundingBox(); return b.y; }).toBeGreaterThanOrEqual(0);
+    await expect.poll(async () => { const b=await target.boundingBox(); return b.y+b.height; }).toBeLessThanOrEqual(180);
+  }
+  await page.evaluate(() => { delete window.visualViewport.height; window.visualViewport.dispatchEvent(new Event('resize')); });
+  await page.setViewportSize({width:1440,height:1000});
+  // An at-limit selection must not displace the question in later conversation context.
+  await composer.fill('所选片段支持哪个结论？');
+  await composer.press('Enter');
+  await expect(dialog.locator('.paper-chat-turn').last()).toContainText('实验只使用了一个数据集，仍需验证其他场景。');
+  expect(sent[3].selection).toHaveLength(8000);
+  await composer.fill('刚才那个问题的证据在哪？');
+  await composer.press('Enter');
+  await expect.poll(() => sent.length).toBe(5);
+  expect(sent[4].history.at(-2).content).toContain('所选片段支持哪个结论？');
+  expect(sent[4].history.at(-2).content.length).toBeLessThanOrEqual(8000);
+  await dialog.getByRole('button',{name:'关闭论文对话'}).click();
+  await page.getByRole('button',{name:'原文',exact:true}).click();
+  await rendered(page);
+  await page.getByRole('button',{name:'打开论文对话'}).click();
+  await expect(dialog.getByText('论文通过复用中间状态减少内存占用。')).toBeVisible();
+
+  await page.route('**/api/reading/reader-other', async route => {
+    const response=await route.fetch({url:route.request().url().replace('reader-other','reader-fixture')});
+    const data=await response.json();data.document.title='另一篇示例论文';await route.fulfill({response,json:data});
+  });
+  await page.route('**/api/reader/tasks/reader-other', async route => {
+    const response=await route.fetch({url:route.request().url().replace('reader-other','reader-fixture')});await route.fulfill({response});
+  });
+  await page.goto('/reader/reader-other');await rendered(page);
+  await page.getByRole('button',{name:'打开论文对话'}).click();
+  await expect(dialog).toContainText('另一篇示例论文');
+  await expect(dialog.getByText('论文通过复用中间状态减少内存占用。')).toHaveCount(0);
+  await expect(composer).toHaveValue('');
 });

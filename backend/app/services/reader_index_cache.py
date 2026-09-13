@@ -19,6 +19,7 @@ class ReaderIndexCache:
             "page_count": len(index["pages"]),
             "pages": index["pages"],
             "origin_pages": index.get("origin_pages", []),
+            "embedded_annotations": {a["data"]["id"]: a["annotation_id"] for a in index.get("ai_highlights", [])},
             "created_at": version.created_at.isoformat(),
             "url": f"/api/reader/documents/{version.document_id}/versions/{version.id}/pdf",
         }

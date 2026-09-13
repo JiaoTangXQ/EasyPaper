@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from ..core.config import get_config
 from ..core.db import engine
 from ..models.reading import ReadingAid, ReadingDocument, ReadingState
-from ..models.task import Task, TaskResult, TaskStatus
+from ..models.task import Task, TaskResult, TaskStatus, TaskTitleTranslation
 
 
 class TaskManager:
@@ -185,7 +185,7 @@ class TaskManager:
                     Path(task.original_pdf_path).unlink(missing_ok=True)
                 except Exception:
                     pass
-            for model in (ReadingAid, ReadingState, ReadingDocument):
+            for model in (ReadingAid, ReadingState, ReadingDocument, TaskTitleTranslation):
                 for row in session.exec(select(model).where(model.task_id == task_id)).all():
                     session.delete(row)
             session.delete(task)

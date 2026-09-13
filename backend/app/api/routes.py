@@ -14,10 +14,12 @@ from slowapi.util import get_remote_address
 from ..core.config import get_config
 from ..models.task import TaskStatus
 from ..models.user import User
+from ..services.ai_client import AIError
 from ..services.background_tasks import create_tracked_task
 from ..services.document_processor import DocumentProcessor
 from ..services.paper_summarizer import PaperSummarizer
 from ..services.pdf_downloader import PdfDownloader
+from ..services.pdf_metadata import pdf_title
 from ..services.task_manager import TaskManager
 from .deps import get_current_user
 
@@ -142,10 +144,14 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
     async def list_tasks(user: User = Depends(get_current_user)) -> list[dict[str, Any]]:
         tasks = task_manager.list_tasks(user_id=user.id)
         reading = task_manager.reading_overview(user.id)
+        titles = await asyncio.to_thread(lambda: [pdf_title(t.original_pdf_path) for t in tasks])
+        translated_titles = reading_service.cached_title_translations(tasks, titles) if reading_service else {}
         return [
             {
                 "task_id": t.task_id,
                 "filename": t.filename,
+                "title": title,
+                "title_zh": translated_titles.get(t.task_id),
                 "status": t.status,
                 "created_at": t.created_at,
                 "percent": t.percent,
@@ -157,8 +163,26 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
                 "highlight_status": t.highlight_status,
                 "has_dual_pdf": bool(t.result_dual_pdf_path and Path(t.result_dual_pdf_path).exists()),
             }
-            for t in tasks
+            for t, title in zip(tasks, titles, strict=False)
         ]
+
+    @router.post("/tasks/{task_id}/title-translation")
+    async def translate_title(task_id: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
+        task = task_manager.get_task(task_id)
+        if not task or task.user_id != user.id:
+            raise HTTPException(status_code=404, detail="论文不存在或无权访问。")
+        title = await asyncio.to_thread(pdf_title, task.original_pdf_path)
+        if not title or len(title) > 1000:
+            raise HTTPException(status_code=422, detail="暂时没有可翻译的论文标题。")
+        if not reading_service:
+            raise HTTPException(status_code=503, detail="标题翻译暂不可用。")
+        try:
+            translated = await reading_service.translate_title(task, title)
+        except AIError as exc:
+            raise HTTPException(status_code=503, detail="标题暂未翻译成功，请稍后重试。") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="论文已移除。") from exc
+        return {"title": title, "title_zh": translated}
 
     @router.get("/status/{task_id}")
     async def get_status(task_id: str, user: User = Depends(get_current_user)) -> dict[str, Any]:

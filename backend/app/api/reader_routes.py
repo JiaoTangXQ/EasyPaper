@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import tempfile
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -43,54 +42,7 @@ def create_reader_router(reading):
     reading.synced_reader = service
 
     def resume_alignment(bundle, background, opening=False):
-        current_versions = {}
-        for version in bundle["versions"]:
-            current_versions.setdefault(version["kind"], version)
-        recovery_busy = bool(service._scheduled) or any(
-            not a["deleted"] and a["alignment_status"] == "pending" for a in bundle["annotations"]
-        )
-        for a in sorted(bundle["annotations"], key=lambda a: a["alignment_status"] != "pending"):
-            elapsed = (datetime.utcnow() - datetime.fromisoformat(a["updated_at"])).total_seconds()
-            new_version = any(
-                v["id"] != a["source_version_id"]
-                and v["id"] not in a["projections"]
-                and v["created_at"] > a["updated_at"]
-                for v in bundle["versions"]
-            )
-            if a["alignment_status"] == "partial" and not new_version:
-                unresolved = [
-                    fragment
-                    for parts in a["projections"].values()
-                    for part in parts
-                    for fragment in part.get("unmatched_fragments", [])
-                ]
-                all_versions_present = all(
-                    v["id"] == a["source_version_id"] or a["projections"].get(v["id"])
-                    for v in current_versions.values()
-                )
-                # Clipped letters have no extra meaning for another model run
-                # to discover. Keep the partial state and explicit retry option.
-                if (
-                    all_versions_present
-                    and unresolved
-                    and all(len(fragment) == 1 and fragment.isascii() and fragment.isalpha() for fragment in unresolved)
-                ):
-                    continue
-                if recovery_busy:
-                    continue
-            if (
-                not a["deleted"]
-                and a["id"] not in service._scheduled
-                and (
-                    new_version
-                    or a["alignment_status"] == "pending"
-                    and (opening or elapsed > 60)
-                    or a["alignment_status"] == "partial"
-                    and elapsed > (60 if opening else 300)
-                )
-            ):
-                service.schedule_alignment(background, a["id"])
-                recovery_busy = True
+        service.recovery.schedule_due(bundle, background, opening=opening)
 
     @router.get("/tasks/{task_id}")
     async def open_reader(task_id: str, background: BackgroundTasks, user: User = Depends(get_current_user)):
@@ -104,8 +56,10 @@ def create_reader_router(reading):
 
     @router.get("/documents/{document_id}")
     async def document(document_id: str, background: BackgroundTasks, user: User = Depends(get_current_user)):
+        service.owned(document_id, user.id)
+        imported = await service.ensure_ai_highlights(document_id)
         bundle = service.bundle(document_id, user.id)
-        resume_alignment(bundle, background)
+        resume_alignment(bundle, background, opening=bool(imported))
         return bundle
 
     @router.get("/documents/{document_id}/versions/{version_id}/pdf")

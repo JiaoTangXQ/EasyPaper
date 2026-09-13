@@ -19,7 +19,7 @@ from app.core.config import LLMConfig
 from app.models.reading import ReaderAnnotation, ReaderDocument, ReaderOperation, ReaderVersion
 from app.models.task import Task, TaskStatus
 from app.models.user import User
-from app.services.reader_geometry import char_rects, locate_quote, pdf_index, union
+from app.services.reader_geometry import char_rects, copied_projection, locate_quote, pdf_index, text_anchor, union
 from app.services.reading_service import ReadingService
 
 EN = "The method uses 30% less memory."
@@ -135,6 +135,33 @@ def saved(reader):
     return reader.client.get(f"/api/reader/documents/{reader.bundle['document_id']}").json()["annotations"][0]
 
 
+def test_archiving_legacy_highlights_repairs_duplicate_ids_without_moving_marks(reader, tmp_path):
+    with fitz.open() as doc:
+        for i in range(2):
+            page = doc.new_page()
+            page.insert_text((50, 100 + i * 100), f"Important finding on page {i + 1}.")
+            mark = page.add_highlight_annot(page.search_for("Important finding"))
+            mark.set_info(content=f"finding {i + 1}", title="method_innovation")
+            mark.update()
+        before = doc.tobytes()
+        original_marks = [(a.info, a.vertices, a.colors, a.opacity) for p in doc for a in p.annots()]
+        assert original_marks[0][0]["id"] == original_marks[1][0]["id"]
+    document_id = reader.bundle["document_id"]
+    version = reader.service.snapshot(document_id, "chinese", before, tmp_path)
+    # The same old file must resolve to the same repaired revision on every open.
+    assert reader.service.snapshot(document_id, "chinese", before, tmp_path).id == version.id
+    repaired = Path(version.path).read_bytes()
+    with fitz.open(stream=repaired, filetype="pdf") as doc:
+        marks = [(a.info, a.vertices, a.colors, a.opacity) for p in doc for a in p.annots()]
+        assert len({info["id"] for info, *_ in marks}) == 2
+        for original, current in zip(original_marks, marks, strict=True):
+            assert {k: v for k, v in original[0].items() if k != "id"} == {
+                k: v for k, v in current[0].items() if k != "id"
+            }
+            assert original[1:] == current[1:]
+    assert reader.service.snapshot(document_id, "chinese", repaired, tmp_path).id == version.id
+
+
 def test_chinese_annotation_projects_to_all_views_and_both_bilingual_pages(reader):
     response = reader.client.put(url(reader), json=annotation_body(reader))
     assert response.status_code == 200, response.text
@@ -147,6 +174,248 @@ def test_chinese_annotation_projects_to_all_views_and_both_bilingual_pages(reade
     assert {p["page"] for p in result["projections"][by_kind["bilingual"]]} == {0, 1}
     with Session(reader.engine) as session:
         assert len(session.exec(select(ReaderAnnotation)).all()) == 1
+
+
+def add_ai_highlight_to_task(reader):
+    with Session(reader.engine) as session:
+        task = session.get(Task, "paper")
+        path, dual_path = Path(task.result_pdf_path), Path(task.result_dual_pdf_path)
+    with fitz.open(path) as pdf:
+        page = pdf[0]
+        mark = page.add_highlight_annot(page.search_for(ZH))
+        mark.set_info(title="key_data", content=ZH)
+        mark.set_colors(stroke=(0.7, 1, 0.7))
+        mark.set_opacity(0.4)
+        mark.update()
+        data = pdf.tobytes()
+    path.write_bytes(data)
+    # A generated bilingual PDF may already contain the same native highlight.
+    with fitz.open(reader.source) as en, fitz.open(path) as zh, fitz.open() as dual:
+        dual.insert_pdf(en)
+        dual.insert_pdf(zh)
+        dual_path.write_bytes(dual.tobytes())
+
+
+def test_embedded_ai_highlights_become_shared_and_sync_all_versions(reader):
+    add_ai_highlight_to_task(reader)
+    bundle = reader.client.get("/api/reader/tasks/paper").json()
+    assert len(bundle["annotations"]) == 1
+    mark = saved(reader)
+    latest = {
+        kind: next(v for v in bundle["versions"] if v["kind"] == kind)
+        for kind in ("original", "chinese", "simple", "bilingual")
+    }
+    assert mark["alignment_status"] == "matched"
+    assert mark["source_version_id"] == latest["chinese"]["id"]
+    assert mark["quote"] == ZH
+    assert mark["data"]["color"] == "#b2ffb2"
+    assert mark["data"]["opacity"] == pytest.approx(0.4)
+    for kind, quote in [("original", EN), ("simple", SIMPLE)]:
+        assert mark["projections"][latest[kind]["id"]][0]["quote"] == quote
+    assert {p["page"] for p in mark["projections"][latest["bilingual"]["id"]]} == {0, 1}
+    assert mark["id"] in latest["bilingual"]["embedded_annotations"].values()
+    assert len(reader.client.get("/api/reader/tasks/paper").json()["annotations"]) == 1
+
+
+def test_ai_import_preserves_user_edits_and_tombstones_on_reopen(reader):
+    add_ai_highlight_to_task(reader)
+    reader.client.get("/api/reader/tasks/paper")
+    mark = saved(reader)
+    data = {**mark["data"], "color": "#ff0000", "contents": "User note"}
+    response = reader.client.put(
+        url(reader, mark["id"]),
+        json={
+            "operation_id": "edit-ai",
+            "base_revision": mark["revision"],
+            "version_id": mark["source_version_id"],
+            "data": data,
+            "geometry_changed": False,
+        },
+    )
+    assert response.status_code == 200
+    reopened = reader.client.get("/api/reader/tasks/paper").json()["annotations"]
+    assert len(reopened) == 1
+    assert reopened[0]["data"]["color"] == "#ff0000"
+    assert reopened[0]["data"]["contents"] == "User note"
+    response = reader.client.put(
+        url(reader, mark["id"]),
+        json={
+            "operation_id": "delete-ai",
+            "base_revision": reopened[0]["revision"],
+            "version_id": mark["source_version_id"],
+            "data": data,
+            "deleted": True,
+        },
+    )
+    assert response.status_code == 200
+    reopened = reader.client.get("/api/reader/tasks/paper").json()["annotations"]
+    assert len(reopened) == 1 and reopened[0]["deleted"]
+
+
+def test_ai_highlights_reach_versions_generated_after_import(reader):
+    add_ai_highlight_to_task(reader)
+    reader.client.get("/api/reader/tasks/paper")
+    mark = saved(reader)
+
+    def generate(*_args):
+        return pdf_bytes(SIMPLE + " Extra explanation."), None, None
+
+    reader.reading.reader_processor = SimpleNamespace(_translate_with_pdf2zh=generate)
+    assert reader.service.request_build(reader.bundle["document_id"], "simple")
+    asyncio.run(reader.service.build(reader.bundle["document_id"], "simple"))
+    bundle = reader.service.bundle(reader.bundle["document_id"], 1)
+    latest = next(v for v in bundle["versions"] if v["kind"] == "simple")
+    current = next(a for a in bundle["annotations"] if a["id"] == mark["id"])
+    assert latest["id"] in current["projections"]
+    assert current["alignment_status"] == "matched"
+
+
+def test_ai_import_does_not_adopt_an_ordinary_embedded_user_highlight(reader):
+    with Session(reader.engine) as session:
+        path = Path(session.get(Task, "paper").result_pdf_path)
+    with fitz.open(path) as pdf:
+        page = pdf[0]
+        mark = page.add_highlight_annot(page.search_for(ZH))
+        mark.set_info(title="Reviewer", content="My note")
+        data = pdf.tobytes()
+    path.write_bytes(data)
+    bundle = reader.client.get("/api/reader/tasks/paper").json()
+    assert not bundle["annotations"]
+
+
+def test_imported_ai_bilingual_copy_is_visible_before_semantic_matching(reader):
+    add_ai_highlight_to_task(reader)
+    with Session(reader.engine) as session:
+        task = session.get(Task, "paper")
+    bundle = asyncio.run(reader.service.open_task(task, 1))
+    mark = bundle["annotations"][0]
+    bilingual = next(v for v in bundle["versions"] if v["kind"] == "bilingual")
+    assert mark["alignment_status"] == "pending"
+    assert mark["projections"][bilingual["id"]][0]["quote"] == ZH
+
+
+def test_polling_an_open_reader_imports_ai_highlights_without_reopening_task(reader):
+    add_ai_highlight_to_task(reader)
+    with Session(reader.engine) as session:
+        path = Path(session.get(Task, "paper").result_pdf_path)
+    original = next(v for v in reader.service.versions(reader.bundle["document_id"]) if v.kind == "original")
+    reader.service.snapshot(
+        reader.bundle["document_id"],
+        "chinese",
+        path.read_bytes(),
+        Path(original.path).parent,
+        json.loads(original.index_json),
+    )
+    bundle = reader.client.get(f"/api/reader/documents/{reader.bundle['document_id']}").json()
+    assert len(bundle["annotations"]) == 1
+    # Its first attempt starts on this poll, without the stale-pending delay.
+    assert saved(reader)["alignment_status"] == "matched"
+
+
+def test_import_scheduler_does_not_serialize_every_highlight(reader):
+    from fastapi import BackgroundTasks
+
+    async def scenario():
+        started, release = [], asyncio.Event()
+
+        async def align(aid, **_):
+            started.append(aid)
+            await release.wait()
+
+        reader.service.align = align
+        background = BackgroundTasks()
+        for i in range(10):
+            reader.service.schedule_alignment(background, f"ai-{i}")
+        running = asyncio.create_task(background())
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert len(started) == 3
+        finally:
+            release.set()
+            await running
+        assert len(started) == 10
+        assert not reader.service._scheduled
+
+    asyncio.run(scenario())
+
+
+def test_identical_text_with_different_font_metrics_uses_target_rectangles():
+    source = pdf_index(pdf_bytes(EN))
+    with fitz.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((75, 140), EN, fontsize=16)
+        target = pdf_index(pdf.tobytes())
+    source["origin_pages"] = target["origin_pages"] = [0]
+    rects = locate_quote(source["units"][0], "30% less memory")
+    copied = copied_projection(
+        source,
+        target,
+        {
+            "type": 9,
+            "pageIndex": 0,
+            "rect": union(rects),
+            "segmentRects": rects,
+        },
+    )
+    assert len(copied) == 1
+    assert copied[0]["quote"] == "30% less memory"
+    assert copied[0]["rects"] == locate_quote(target["units"][0], "30% less memory")
+    assert copied[0]["rects"] != rects
+
+
+def test_ai_highlight_with_empty_pdf_contents_recovers_selected_text(reader):
+    add_ai_highlight_to_task(reader)
+    with Session(reader.engine) as session:
+        path = Path(session.get(Task, "paper").result_pdf_path)
+    with fitz.open(path) as pdf:
+        page = pdf[0]
+        mark = next(page.annots())
+        mark.set_info(content="")
+        data = pdf.tobytes()
+    path.write_bytes(data)
+    bundle = reader.client.get("/api/reader/tasks/paper").json()
+    assert len(bundle["annotations"]) == 1
+    assert bundle["annotations"][0]["quote"] == ZH
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_ai_import_adopts_previously_edited_native_record(reader, deleted):
+    add_ai_highlight_to_task(reader)
+    with Session(reader.engine) as session:
+        path = Path(session.get(Task, "paper").result_pdf_path)
+    original = next(v for v in reader.service.versions(reader.bundle["document_id"]) if v.kind == "original")
+    version = reader.service.snapshot(
+        reader.bundle["document_id"],
+        "chinese",
+        path.read_bytes(),
+        Path(original.path).parent,
+        json.loads(original.index_json),
+    )
+    data = annotation_body(reader)["data"]
+    data.update(id="fitz-A0", contents="Already edited", color="#ff0000")
+    with Session(reader.engine) as session:
+        session.add(
+            ReaderAnnotation(
+                id="existing-user-record",
+                document_id=reader.bundle["document_id"],
+                user_id=1,
+                source_version_id=version.id,
+                data_json=json.dumps(data),
+                quote=ZH,
+                deleted=deleted,
+            )
+        )
+        session.commit()
+    bundle = reader.client.get("/api/reader/tasks/paper").json()
+    assert len(bundle["annotations"]) == 1
+    assert bundle["annotations"][0]["id"] == "existing-user-record"
+    assert bundle["annotations"][0]["deleted"] == deleted
+    assert bundle["annotations"][0]["data"]["color"] == "#ff0000"
+    # Aliases survive a process restart too.
+    reader.service._ai_imported.clear()
+    reader.service._ai_aliases.clear()
+    assert len(reader.client.get("/api/reader/tasks/paper").json()["annotations"]) == 1
 
 
 @pytest.mark.parametrize("parent_ref", ["native-1", "ep_annotation1_0"])
@@ -1418,9 +1687,19 @@ def test_automatic_recovery_does_not_fill_the_queue_with_old_partials(reader, pe
 
 
 def test_clipped_letter_partial_does_not_repeat_automatic_model_requests(reader):
-    reader.client.put(url(reader), json=annotation_body(reader))
+    reader.client.put(url(reader), json=annotation_body(reader, kind="original"))
+    source = reader.service.snapshot(
+        reader.bundle["document_id"], "original", pdf_bytes(EN + " Budget is limited."), reader.source.parent
+    )
+    index = json.loads(source.index_json)
+    rects = char_rects(index["units"][0]["chars"]) + char_rects(
+        [next(c for c in index["units"][1]["chars"] if c["c"] == "B")]
+    )
     with Session(reader.engine) as session:
         row = session.get(ReaderAnnotation, "annotation1")
+        row.source_version_id = source.id
+        row.quote = EN + " B"
+        row.data_json = json.dumps({**json.loads(row.data_json), "rect": union(rects), "segmentRects": rects})
         projections = json.loads(row.projections_json)
         for parts in projections.values():
             for part in parts:
@@ -1435,8 +1714,71 @@ def test_clipped_letter_partial_does_not_repeat_automatic_model_requests(reader)
         session.commit()
     scheduled = []
     reader.service.schedule_alignment = lambda _background, aid: scheduled.append(aid)
-    assert reader.client.get("/api/reader/tasks/paper").status_code == 200
+    result = reader.client.get(f"/api/reader/documents/{reader.bundle['document_id']}").json()["annotations"][0]
     assert scheduled == []
+    assert result["alignment_status"] == "matched"
+    assert result["quote"] == EN + " B"
+    assert "未选完整" in result["alignment_message"]
+
+
+def test_page_context_disambiguates_a_whole_repeated_heading():
+    units = [
+        {"id": "a", "page": 0, "text": "First trial. "},
+        {"id": "b", "page": 0, "text": "Observation and analysis."},
+        {"id": "c", "page": 0, "text": "Scores decreased. Second trial. "},
+        {"id": "d", "page": 0, "text": "Observation and analysis."},
+        {"id": "e", "page": 0, "text": "Scores improved."},
+    ]
+    anchor = text_anchor(units[3], units[3]["text"], units)
+    assert anchor["prefix"].endswith("secondtrial.")
+    assert anchor["suffix"].startswith("scoresimproved.")
+
+
+def test_zero_width_ligature_continuation_survives_copy_and_legacy_anchor():
+    from app.services.reader_geometry import selection_parts
+
+    # MuPDF expands the final ff ligature into a painted f and a zero-width f.
+    # The latter's center can sit just outside the original highlight quad.
+    chars = [
+        {"c": "d", "b": [10, 10, 16, 20], "l": 0},
+        {"c": "i", "b": [16, 10, 20, 20], "l": 0},
+        {"c": "f", "b": [20, 10, 28, 20], "l": 0},
+        {"c": "f", "b": [28, 10, 28, 20], "l": 0},
+        {"c": "\n", "b": None, "l": 0},
+        {"c": "l", "b": [10, 24, 14, 34], "l": 1},
+        {"c": "e", "b": [14, 24, 20, 34], "l": 1},
+        {"c": "f", "b": [20, 24, 24, 34], "l": 1},
+        {"c": "t", "b": [24, 24, 28, 34], "l": 1},
+    ]
+    unit = {"id": "ligature", "page": 0, "text": "diff\nleft", "chars": chars}
+    index = {"units": [unit]}
+    annotation = {"pageIndex": 0, "rect": {"origin": {"x": 10, "y": 10}, "size": {"width": 17, "height": 24}}}
+    assert selection_parts(index, annotation)[0]["quote"] == "diffleft"
+    assert text_anchor(unit, "difleft", [unit])["text"] == "diff\nleft"
+    # Geometry evidence is required: never auto-correct an ordinary missing letter.
+    ordinary = {**unit, "chars": [{**c, "b": [28, 10, 30, 20]} if i == 3 else c for i, c in enumerate(chars)]}
+    assert text_anchor(ordinary, "difleft", [ordinary])["text"] == "difleft"
+    multiple = {**unit, "text": "diff\nleftdiff", "chars": chars + chars[:4]}
+    assert text_anchor(multiple, "difleftdiff", [multiple])["text"] == "diff\nleftdiff"
+
+
+def test_reading_repairs_legacy_sentence_only_anchors_without_realigning(reader):
+    reader.client.put(url(reader), json=annotation_body(reader))
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        original_data, revision, updated = row.data_json, row.revision, row.updated_at
+        projections = json.loads(row.projections_json)
+        for parts in projections.values():
+            for part in parts:
+                part["text_anchor"] = {"text": part["quote"]}
+        row.projections_json = json.dumps(projections)
+        session.add(row)
+        session.commit()
+    result = saved(reader)
+    assert all(p["text_anchor"]["schema"] == 3 for parts in result["projections"].values() for p in parts)
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        assert (row.data_json, row.revision, row.updated_at) == (original_data, revision, updated)
 
 
 def test_selection_does_not_silently_drop_second_sentence(reader):
@@ -2496,3 +2838,110 @@ def test_manual_anchor_on_another_page_still_reaches_its_other_languages(reader)
     assert mark["projections"][original.id][0]["method"] == "manual"
     assert mark["projections"][simple.id][0]["quote"] == SIMPLE
     assert mark["projections"][simple.id][0]["page"] == 1
+
+
+def test_server_recovers_after_browser_closes_and_service_restarts(reader):
+    from app.models.reading import ReaderAlignmentRetry
+    from app.services.reader_recovery import ReaderRecovery
+
+    previous = reader.reading.ask_model
+
+    async def unavailable(*_):
+        raise TimeoutError("provider temporarily unavailable")
+
+    reader.reading.ask_model = unavailable
+    reader.client.put(url(reader), json=annotation_body(reader))
+    with Session(reader.engine) as session:
+        record = session.get(ReaderAlignmentRetry, "annotation1")
+        assert record.attempts == 1 and record.next_attempt_at
+        record.next_attempt_at = datetime.utcnow() - timedelta(seconds=1)
+        session.add(record)
+        session.commit()
+    reader.reading.ask_model = previous
+    reader.service.recovery = ReaderRecovery(reader.service)
+    asyncio.run(reader.service.recovery.run_once())
+    with Session(reader.engine) as session:
+        assert session.get(ReaderAnnotation, "annotation1").alignment_status == "matched"
+        assert session.get(ReaderAlignmentRetry, "annotation1") is None
+
+
+def test_recovery_budget_does_not_repeat_forever_or_block_other_documents(reader):
+    from app.models.reading import ReaderAlignmentRetry
+
+    reader.client.put(url(reader), json=annotation_body(reader))
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        row.alignment_status = "partial"
+        session.add(row)
+        session.commit()
+        for _ in range(4):
+            reader.service.recovery.finished(row)
+    bundle = reader.service.bundle(reader.bundle["document_id"], 1)
+    assert bundle["annotations"][0]["retry_exhausted"]
+    scheduled = []
+    reader.service.schedule_alignment = lambda _background, aid: scheduled.append(aid)
+    asyncio.run(reader.service.recovery.run_once())
+    assert scheduled == []
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        row.geometry_revision += 1
+        session.add(row)
+        session.commit()
+    reader.service._scheduled.add("unrelated-document-job")
+    asyncio.run(reader.service.recovery.run_once())
+    assert scheduled == ["annotation1"]
+    with Session(reader.engine) as session:
+        assert session.get(ReaderAlignmentRetry, "annotation1").attempts == 4
+
+
+@pytest.mark.parametrize(
+    "source,target",
+    [
+        ("成本相差约19倍（图9）。", "Cost varies about nineteen-fold (Figure 9)."),
+        ("Cost varies about nineteen-fold (Figure 9).", "成本相差约19倍（图9）。"),
+    ],
+)
+def test_digit_and_spelled_out_quantity_are_equivalent(reader, source, target):
+    index = pdf_index(pdf_bytes(target, chinese=any("\u4e00" <= c <= "\u9fff" for c in target)))
+
+    async def answer(*_):
+        return {"matches": [{"id": index["units"][0]["id"], "quote": target, "confidence": 0.99}]}
+
+    reader.reading.ask_model = answer
+    result = asyncio.run(reader.service._match(source, index["units"]))
+    assert result and result[0]["quote"] == target
+
+
+def test_number_word_matching_does_not_round_a_different_value(reader):
+    target = "Cost varies nineteen-fold (Figure 9)."
+    index = pdf_index(pdf_bytes(target))
+
+    async def answer(*_):
+        return {"matches": [{"id": index["units"][0]["id"], "quote": target, "confidence": 0.99}]}
+
+    reader.reading.ask_model = answer
+    assert asyncio.run(reader.service._match("成本相差19.1倍（图9）。", index["units"])) == []
+
+
+def test_settled_document_poll_does_not_reload_each_annotation(reader):
+    from sqlalchemy import event
+
+    reader.client.put(url(reader), json=annotation_body(reader))
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        for n in range(40):
+            session.add(ReaderAnnotation(**{**row.model_dump(), "id": f"copy-{n}"}))
+        session.commit()
+    queries = []
+
+    def record(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lower().startswith("select readerannotation."):
+            queries.append(statement)
+
+    event.listen(reader.engine, "before_cursor_execute", record)
+    try:
+        bundle = reader.service.bundle(reader.bundle["document_id"], 1)
+    finally:
+        event.remove(reader.engine, "before_cursor_execute", record)
+    assert len(bundle["annotations"]) == 41
+    assert len(queries) == 1, "A one-second polling endpoint must read annotations in one batch"

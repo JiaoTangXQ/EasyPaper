@@ -9,6 +9,7 @@ import json
 import logging
 from dataclasses import dataclass
 from itertools import groupby
+from uuid import uuid4
 
 import fitz
 
@@ -466,6 +467,9 @@ class HighlightService:
             annot.set_colors(stroke=color)
             annot.set_opacity(0.4)
             annot.set_info(title=selection.category, content=candidate.text)
+            # The reader uses document-wide IDs; PyMuPDF's default fitz-A0 name
+            # restarts on each page and makes later pages overwrite earlier ones.
+            doc.xref_set_key(annot.xref, "NM", fitz.get_pdf_str(f"easypaper-ai-{uuid4().hex}"))
             annot.update()
 
             self._increment_stats(stats, selection.category)

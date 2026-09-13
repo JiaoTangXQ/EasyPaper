@@ -108,12 +108,13 @@ async def healthcheck() -> dict:
 
 
 _cleanup_task: asyncio.Task | None = None
+_reader_recovery_task: asyncio.Task | None = None
 _mcp_session_context: Any = None
 
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    global _cleanup_task, _mcp_session_context
+    global _cleanup_task, _reader_recovery_task, _mcp_session_context
     init_db()
     # In-process PDF generation cannot survive a restart; saved revisions can.
     from sqlmodel import select
@@ -133,11 +134,18 @@ async def on_startup() -> None:
     _mcp_session_context = mcp_server.session_manager.run()
     await _mcp_session_context.__aenter__()
     _cleanup_task = asyncio.create_task(run_cleanup_task())
+    _reader_recovery_task = asyncio.create_task(reading_service.synced_reader.recovery.run())
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     global _mcp_session_context
+    if _reader_recovery_task:
+        _reader_recovery_task.cancel()
+        try:
+            await _reader_recovery_task
+        except asyncio.CancelledError:
+            pass
     if _cleanup_task and not _cleanup_task.done():
         _cleanup_task.cancel()
         try:

@@ -16,6 +16,8 @@ import {
 } from "@embedpdf/react-pdf-viewer";
 import { Task, type PdfPageGeometry, type PdfErrorReason } from "@embedpdf/models";
 import { LockModeType } from "@embedpdf/plugin-annotation";
+import { UIPlugin } from "@embedpdf/plugin-ui";
+import { usePdfFullscreenToolbar } from "./usePdfFullscreenToolbar";
 import wasmUrl from "@embedpdf/pdfium/pdfium.wasm?url";
 import chineseFont from "../../../node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Regular.otf?url";
 import { projectedAnnotations, type SharedAnnotation } from "./reader-store";
@@ -32,7 +34,13 @@ type Props = {
   src: string;
   versionId: string;
   initialPage?: number;
+  onReady?: () => void;
   annotations: SharedAnnotation[];
+  embeddedAnnotations?: Record<string, string>;
+  fullscreen?: boolean;
+  chromeVisible?: boolean;
+  onToolbarHeight?: (height: number) => void;
+  onToolbarInteraction?: (active: boolean) => void;
   onPageChange: (page: number) => void;
   onChange: (id: string, data: PdfAnnotationObject, deleted: boolean, geometryChanged: boolean) => void;
   onSelection?: (text: string) => void;
@@ -59,6 +67,8 @@ const fingerprint = (data: PdfAnnotationObject) =>
 const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   const callbacks = useRef(props);
   callbacks.current = props;
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+  usePdfFullscreenToolbar(container, Boolean(props.fullscreen), props.chromeVisible !== false, props.onToolbarHeight);
   const registryRef = useRef<PluginRegistry>();
   const loaded = useRef(false);
   const suppress = useRef(false);
@@ -82,7 +92,29 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
         // Keep PDFium's metrically compatible Base-14 fonts. Replacing Times
         // with Noto Sans changes glyph widths, causing clipping and overlaps.
       },
-      theme: { preference: "light" },
+      theme: {
+        preference: "light",
+        light: {
+          background: { app: "#f0efec", surface: "#ffffff", surfaceAlt: "#f7f7f5", input: "#ffffff" },
+          foreground: { primary: "#191817", secondary: "#56524d", muted: "#6b6864" },
+          border: { default: "#deddd8", subtle: "#eeede9", strong: "#918b83" },
+          accent: {
+            primary: "#bd392b",
+            primaryHover: "#a42e22",
+            primaryActive: "#892519",
+            primaryLight: "#f9eeeb",
+            primaryForeground: "#ffffff",
+          },
+          interactive: {
+            hover: "#f0efec",
+            active: "#e7e4df",
+            selected: "#f9eeeb",
+            focus: "#bd392b",
+            focusRing: "#f2d8d2",
+          },
+          scrollbar: { track: "transparent", thumb: "#bbb8b2", thumbHover: "#918b83" },
+        },
+      },
       zoom: { defaultZoomLevel: ZoomMode.FitWidth },
       documentManager: { maxDocuments: 1 },
       selection: { toleranceFactor: 1, minSelectionDragDistance: 2 },
@@ -116,6 +148,10 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       const api = registry.getPlugin<AnnotationPlugin>("annotation")?.provides();
       if (!api) return;
       // Include tombstones so edits/deletions of annotations embedded in the input PDF survive reloads.
+      const sharedIds = new Set(callbacks.current.annotations.map((a) => a.id));
+      for (const [nativeId, sharedId] of Object.entries(callbacks.current.embeddedAnnotations || {})) {
+        if (sharedIds.has(sharedId)) ids.current.set(nativeId, sharedId);
+      }
       for (const a of callbacks.current.annotations) {
         if (a.source_version_id === callbacks.current.versionId) {
           ids.current.set(a.data.id, a.id);
@@ -214,7 +250,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   }, []);
   useEffect(() => {
     void reconcile();
-  }, [props.annotations, props.versionId, reconcile]);
+  }, [props.annotations, props.versionId, props.embeddedAnnotations, reconcile]);
 
   const onReady = useCallback(
     (registry: PluginRegistry) => {
@@ -251,6 +287,18 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       );
       const documents = registry.getPlugin<DocumentManagerPlugin>("document-manager")!.provides();
       const scroll = registry.getPlugin<ScrollPlugin>("scroll")!.provides();
+      const ui = registry.getPlugin<UIPlugin>("ui")?.provides();
+      if (ui) {
+        const updateInteraction = () => {
+          const id = documents.getActiveDocumentId();
+          const scope = id ? ui.forDocument(id) : undefined;
+          callbacks.current.onToolbarInteraction?.(
+            Boolean(scope && (scope.getOpenMenus().length || scope.isModalOpen())),
+          );
+        };
+        removers.current.push(ui.onMenuChanged(updateInteraction), ui.onModalChanged(updateInteraction));
+        removers.current.push(() => callbacks.current.onToolbarInteraction?.(false));
+      }
       removers.current.push(
         annotation.onAnnotationEvent((event: AnnotationEvent) => {
           if (event.type === "loaded") {
@@ -301,6 +349,8 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
               behavior: "instant",
             });
           }
+          // A second navigation can arrive while this PDF is still opening.
+          if (event.isInitial) callbacks.current.onReady?.();
         }),
       );
       removers.current.push(scroll.onPageChange((event) => callbacks.current.onPageChange(event.pageNumber)));
@@ -421,7 +471,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
           {error}
         </div>
       ) : null}
-      <EmbedViewer config={config} onReady={onReady} style={{ width: "100%", height: "100%" }} />
+      <EmbedViewer config={config} onInit={setContainer} onReady={onReady} style={{ width: "100%", height: "100%" }} />
     </div>
   );
 });

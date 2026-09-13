@@ -38,9 +38,15 @@ class ExplainRequest(BaseModel):
     selection: str = Field(default="", max_length=8000)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=8000)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     selection: str = Field(default="", max_length=8000)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=12)
 
 
 def create_reading_router(service) -> APIRouter:
@@ -120,7 +126,15 @@ def create_reading_router(service) -> APIRouter:
     @router.post("/{task_id}/ask")
     async def ask(task_id: str, body: AskRequest, user: User = Depends(get_current_user)):
         task = owned(task_id, user)
-        return await model_result(service.ask(task, await document_for(task), body.question, body.selection))
+        return await model_result(
+            service.ask(
+                task,
+                await document_for(task),
+                body.question,
+                body.selection,
+                history=[message.model_dump() for message in body.history],
+            )
+        )
 
     @router.get("/{task_id}/blocks/{block_id}/source")
     async def source(task_id: str, block_id: str, full_page: bool = False, user: User = Depends(get_current_user)):

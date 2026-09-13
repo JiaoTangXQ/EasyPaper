@@ -34,6 +34,8 @@ class ProcessingConfig(BaseModel):
     max_pages: int = Field(100, alias="max_pages")
     max_upload_mb: int = Field(50, alias="max_upload_mb")
     max_concurrent: int = Field(3, alias="max_concurrent")
+    # Paragraph requests per document; independent of the concurrent document limit.
+    translation_threads: int = Field(8, ge=1, le=16)
     preview_html: bool = Field(True, alias="preview_html")
 
 

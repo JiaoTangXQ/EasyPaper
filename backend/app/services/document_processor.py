@@ -158,13 +158,36 @@ class DocumentProcessor:
             input_path = Path(temp_dir) / filename
             input_path.write_bytes(file_bytes)
 
-            logger.info(f"开始处理: {input_path} (mode={mode}, lang_out={lang_out})")
+            logger.info(
+                "开始处理: %s (mode=%s, lang_out=%s, threads=%s)",
+                input_path,
+                mode,
+                lang_out,
+                self.config.processing.translation_threads,
+            )
 
             # 更新进度
             if mode == "simplify":
                 self.task_manager.update_progress(task_id, TaskStatus.REWRITING, 30, "正在使用 AI 简化...")
             else:
                 self.task_manager.update_progress(task_id, TaskStatus.REWRITING, 30, "正在使用 AI 翻译...")
+
+            action = "简化" if mode == "simplify" else "翻译"
+
+            def report_page_progress(progress) -> None:
+                total = progress.total
+                if not total:
+                    return
+                # pdf2zh increments n BEFORE processing the current page. Only
+                # preceding pages are complete; reserve 80+ for saving/highlighting.
+                current = max(1, min(progress.n, total))
+                percent = 30 + int(50 * (current - 1) / total)
+                self.task_manager.update_progress(
+                    task_id,
+                    TaskStatus.REWRITING,
+                    percent,
+                    f"正在{action}第 {current} / {total} 页",
+                )
 
             try:
                 # 调用 pdf2zh
@@ -173,7 +196,8 @@ class DocumentProcessor:
                         files=[str(input_path)],
                         lang_in="en",
                         lang_out=lang_out,
-                        thread=4,
+                        thread=self.config.processing.translation_threads,
+                        callback=report_page_progress,
                         output=temp_dir,
                         model=model,
                         prompt=SIMPLIFY_PROMPT if mode == "simplify" else None,
@@ -187,7 +211,7 @@ class DocumentProcessor:
                 file_mono, file_dual = results[0]
 
                 # 更新进度
-                self.task_manager.update_progress(task_id, TaskStatus.RENDERING, 80, "正在生成 PDF...")
+                self.task_manager.update_progress(task_id, TaskStatus.RENDERING, 80, "正在保存阅读版本...")
 
                 # 默认使用单语版本；双语版本作为单独下载选项保存。
                 output_file = file_mono if file_mono else file_dual

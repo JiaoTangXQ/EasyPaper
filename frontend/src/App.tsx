@@ -10,6 +10,7 @@ import FlashcardReview from "./pages/FlashcardReview";
 import KnowledgeGraph from "./pages/KnowledgeGraph";
 import PaperSummary from "./pages/PaperSummary";
 import Layout from "./components/Layout";
+import Settings from "./pages/Settings";
 
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
   const token = localStorage.getItem("token");
@@ -25,8 +26,15 @@ function App() {
         <Route path="/register" element={<Register />} />
 
         {/* Protected Routes with Layout */}
-        <Route element={<PrivateRoute><Layout /></PrivateRoute>}>
+        <Route
+          element={
+            <PrivateRoute>
+              <Layout />
+            </PrivateRoute>
+          }
+        >
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/reader/:taskId" element={<Reader />} />
           <Route path="/summary/:taskId" element={<PaperSummary />} />
           <Route path="/knowledge" element={<KnowledgeBase />} />

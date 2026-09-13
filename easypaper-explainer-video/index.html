@@ -1,0 +1,1577 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #f5f7fb;
+        color: #111827;
+        font-family: system-ui, sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background:
+          linear-gradient(rgba(37, 99, 235, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(37, 99, 235, 0.035) 1px, transparent 1px),
+          #f5f7fb;
+        background-size: 48px 48px;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        padding: 72px 88px 150px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        overflow: hidden;
+      }
+
+      .scene-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 40px;
+      }
+
+      .eyebrow {
+        font-size: 20px;
+        font-weight: 700;
+        color: #2563eb;
+        letter-spacing: 0;
+      }
+
+      h1,
+      h2 {
+        letter-spacing: 0;
+      }
+
+      .title {
+        max-width: 1120px;
+        margin-top: 10px;
+        font-size: 64px;
+        line-height: 1.08;
+        font-weight: 800;
+        color: #111827;
+      }
+
+      .subtitle {
+        max-width: 880px;
+        margin-top: 12px;
+        font-size: 28px;
+        line-height: 1.48;
+        color: #4b5563;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        height: 38px;
+        padding: 0 14px;
+        border: 1px solid #dde3ee;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        color: #6b7280;
+        font-size: 18px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .workarea {
+        min-height: 0;
+        flex: 1;
+        display: grid;
+        gap: 30px;
+      }
+
+      .two-col {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .panel {
+        min-width: 0;
+        min-height: 0;
+        border: 1px solid #dde3ee;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+        overflow: hidden;
+      }
+
+      .panel-head {
+        height: 58px;
+        padding: 0 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #dde3ee;
+        color: #374151;
+        font-size: 19px;
+        font-weight: 700;
+        background: #ffffff;
+      }
+
+      .panel-body {
+        height: calc(100% - 58px);
+        padding: 26px;
+        position: relative;
+      }
+
+      .pdf-page {
+        width: 100%;
+        height: 100%;
+        border-radius: 14px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 28px 34px;
+        box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.02);
+        overflow: hidden;
+      }
+
+      .paper-title {
+        width: 74%;
+        height: 28px;
+        border-radius: 7px;
+        background: #111827;
+        opacity: 0.86;
+        margin-bottom: 22px;
+      }
+
+      .paper-line {
+        height: 9px;
+        border-radius: 6px;
+        background: #9ca3af;
+        margin-bottom: 13px;
+      }
+
+      .paper-line.short {
+        width: 62%;
+      }
+
+      .paper-line.medium {
+        width: 82%;
+      }
+
+      .paper-line.long {
+        width: 96%;
+      }
+
+      .equation {
+        margin: 20px auto;
+        width: 62%;
+        height: 54px;
+        border-radius: 12px;
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #374151;
+        font-size: 25px;
+        font-family: serif;
+      }
+
+      .figure-box {
+        margin: 22px 0;
+        height: 142px;
+        border-radius: 14px;
+        border: 1px solid #d1d5db;
+        background:
+          linear-gradient(90deg, transparent 0 18%, rgba(37, 99, 235, 0.15) 18% 23%, transparent 23% 40%, rgba(124, 58, 237, 0.14) 40% 45%, transparent 45%),
+          #f8fafc;
+      }
+
+      .bubble-stack {
+        position: absolute;
+        left: 44px;
+        top: 96px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .problem-bubble {
+        width: 104px;
+        height: 46px;
+        border-radius: 999px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        box-shadow: 0 12px 30px rgba(17, 24, 39, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #374151;
+        font-size: 20px;
+        font-weight: 700;
+      }
+
+      .upload-card {
+        height: 100%;
+        padding: 42px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 26px;
+        background:
+          linear-gradient(135deg, rgba(37, 99, 235, 0.08), transparent 42%),
+          #ffffff;
+      }
+
+      .app-title {
+        font-size: 76px;
+        line-height: 1;
+        font-weight: 850;
+        color: #111827;
+      }
+
+      .app-sub {
+        max-width: 560px;
+        color: #4b5563;
+        font-size: 28px;
+        line-height: 1.42;
+      }
+
+      .upload-zone {
+        border: 2px dashed #a9b8d4;
+        border-radius: 24px;
+        background: #f8fbff;
+        padding: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 28px;
+      }
+
+      .upload-icon {
+        width: 78px;
+        height: 78px;
+        border-radius: 22px;
+        background: #2563eb;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 42px;
+        font-weight: 800;
+      }
+
+      .upload-main {
+        flex: 1;
+      }
+
+      .upload-main strong {
+        display: block;
+        font-size: 28px;
+        margin-bottom: 8px;
+      }
+
+      .upload-main span {
+        display: block;
+        font-size: 21px;
+        color: #6b7280;
+      }
+
+      .action-loop {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .manual-step {
+        border: 1px solid #dde3ee;
+        border-radius: 18px;
+        background: #ffffff;
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        box-shadow: 0 12px 32px rgba(17, 24, 39, 0.06);
+      }
+
+      .manual-step .icon {
+        width: 54px;
+        height: 54px;
+        border-radius: 16px;
+        background: #f3f6fb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #2563eb;
+        font-size: 26px;
+      }
+
+      .manual-step strong {
+        font-size: 26px;
+      }
+
+      .manual-step span {
+        color: #6b7280;
+        font-size: 19px;
+        line-height: 1.42;
+      }
+
+      .loop-arrow {
+        position: absolute;
+        width: 196px;
+        height: 196px;
+        left: 50%;
+        top: 50%;
+        margin-left: -98px;
+        margin-top: -98px;
+        border-radius: 999px;
+        border: 3px solid rgba(37, 99, 235, 0.22);
+      }
+
+      .loop-arrow::after {
+        content: "";
+        position: absolute;
+        right: 11px;
+        top: 38px;
+        width: 18px;
+        height: 18px;
+        border-top: 4px solid #2563eb;
+        border-right: 4px solid #2563eb;
+        transform: rotate(25deg);
+      }
+
+      .control-row {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      .pill-control {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 56px;
+        padding: 0 24px;
+        border-radius: 999px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        font-size: 22px;
+        font-weight: 700;
+        color: #374151;
+      }
+
+      .pill-control.active-blue {
+        background: #2563eb;
+        color: #ffffff;
+        border-color: #2563eb;
+      }
+
+      .pill-control.active-yellow {
+        background: #f59e0b;
+        color: #ffffff;
+        border-color: #f59e0b;
+      }
+
+      .url-bar {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        height: 68px;
+        border: 1px solid #dde3ee;
+        border-radius: 18px;
+        background: #ffffff;
+        padding: 0 14px 0 24px;
+        font-size: 22px;
+        color: #6b7280;
+      }
+
+      .url-button {
+        margin-left: auto;
+        height: 44px;
+        border-radius: 14px;
+        background: #2563eb;
+        color: #ffffff;
+        padding: 0 20px;
+        display: flex;
+        align-items: center;
+        font-weight: 700;
+      }
+
+      .workflow-fragments {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 20px;
+      }
+
+      .fragment {
+        height: 78px;
+        border-radius: 18px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        gap: 18px;
+        color: #374151;
+        font-size: 24px;
+        font-weight: 700;
+        box-shadow: 0 12px 30px rgba(17, 24, 39, 0.05);
+      }
+
+      .fragment-dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: #2563eb;
+      }
+
+      .screenshot-frame {
+        height: 100%;
+        border-radius: 20px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        padding: 14px;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.1);
+        overflow: hidden;
+        position: relative;
+      }
+
+      .screenshot-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        border-radius: 14px;
+        background: #f8fafc;
+      }
+
+      .layout-callouts {
+        position: absolute;
+        inset: 28px;
+        pointer-events: none;
+      }
+
+      .callout-line {
+        position: absolute;
+        height: 3px;
+        border-radius: 999px;
+        background: #2563eb;
+        transform-origin: left center;
+      }
+
+      .callout-label {
+        position: absolute;
+        height: 44px;
+        border-radius: 999px;
+        background: #ffffff;
+        border: 1px solid #bfdbfe;
+        color: #2563eb;
+        padding: 0 16px;
+        display: flex;
+        align-items: center;
+        font-size: 18px;
+        font-weight: 700;
+        box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+      }
+
+      .reader-grid {
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 20px;
+      }
+
+      .highlight-sweep {
+        position: absolute;
+        left: 80px;
+        right: 380px;
+        height: 34px;
+        border-radius: 8px;
+        opacity: 0.72;
+      }
+
+      .highlight-yellow {
+        top: 245px;
+        background: #fde68a;
+      }
+
+      .highlight-blue {
+        top: 338px;
+        background: #bfdbfe;
+      }
+
+      .highlight-green {
+        top: 432px;
+        background: #bbf7d0;
+      }
+
+      .highlight-panel {
+        border-radius: 18px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        overflow: hidden;
+      }
+
+      .highlight-panel-head {
+        height: 80px;
+        padding: 18px;
+        border-bottom: 1px solid #dde3ee;
+      }
+
+      .filter-row {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+      }
+
+      .filter-chip {
+        height: 28px;
+        border-radius: 8px;
+        padding: 0 10px;
+        display: flex;
+        align-items: center;
+        font-size: 14px;
+        border: 1px solid #dde3ee;
+        color: #6b7280;
+      }
+
+      .filter-chip.active {
+        background: #2563eb;
+        color: #ffffff;
+        border-color: #2563eb;
+      }
+
+      .highlight-row {
+        padding: 18px;
+        border-bottom: 1px solid #eef2f7;
+      }
+
+      .highlight-row strong {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: #374151;
+        font-size: 18px;
+      }
+
+      .dot {
+        width: 13px;
+        height: 13px;
+        border-radius: 4px;
+        display: inline-block;
+      }
+
+      .highlight-row p {
+        margin-top: 10px;
+        color: #6b7280;
+        font-size: 15px;
+        line-height: 1.45;
+      }
+
+      .page-jump {
+        position: absolute;
+        right: 416px;
+        top: 242px;
+        height: 44px;
+        border-radius: 999px;
+        background: #2563eb;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-size: 18px;
+        font-weight: 700;
+        box-shadow: 0 14px 30px rgba(37, 99, 235, 0.28);
+      }
+
+      .context-card {
+        height: 100%;
+        border-radius: 24px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        padding: 34px;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .context-paper {
+        width: 100%;
+        height: 100%;
+        border-radius: 18px;
+        border: 1px solid #e5e7eb;
+        background: #ffffff;
+        padding: 38px 46px;
+      }
+
+      .context-highlight {
+        position: absolute;
+        left: 105px;
+        right: 105px;
+        top: 394px;
+        height: 58px;
+        background: rgba(253, 230, 138, 0.8);
+        border-radius: 10px;
+      }
+
+      .verify-tag {
+        position: absolute;
+        left: 118px;
+        top: 468px;
+        border-radius: 999px;
+        background: #ffffff;
+        border: 1px solid #fbbf24;
+        color: #92400e;
+        height: 50px;
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        font-size: 20px;
+        font-weight: 700;
+        box-shadow: 0 12px 26px rgba(146, 64, 14, 0.12);
+      }
+
+      .structure-grid {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 520px 1fr;
+        gap: 26px;
+      }
+
+      .sentence-card {
+        align-self: center;
+        border-radius: 24px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        padding: 34px;
+        color: #374151;
+        font-size: 28px;
+        line-height: 1.48;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+      }
+
+      .entity-cards {
+        align-self: center;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .entity-card {
+        min-height: 132px;
+        border-radius: 20px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        padding: 22px;
+        box-shadow: 0 16px 40px rgba(17, 24, 39, 0.06);
+      }
+
+      .entity-card small {
+        display: inline-flex;
+        height: 28px;
+        align-items: center;
+        border-radius: 999px;
+        padding: 0 10px;
+        background: #ede9fe;
+        color: #7c3aed;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .entity-card strong {
+        display: block;
+        margin-top: 14px;
+        color: #111827;
+        font-size: 24px;
+      }
+
+      .entity-card span {
+        display: block;
+        margin-top: 8px;
+        color: #6b7280;
+        font-size: 17px;
+        line-height: 1.38;
+      }
+
+      .knowledge-screens {
+        position: absolute;
+        left: 666px;
+        right: 90px;
+        bottom: 150px;
+        height: 276px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .knowledge-screens .screenshot-frame {
+        border-radius: 16px;
+        padding: 8px;
+      }
+
+      .graph-stage {
+        height: 100%;
+        border-radius: 24px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 0;
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+      }
+
+      .graph-canvas {
+        position: relative;
+        background:
+          linear-gradient(rgba(124, 58, 237, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(124, 58, 237, 0.045) 1px, transparent 1px),
+          #fbfaff;
+        background-size: 42px 42px;
+      }
+
+      .graph-canvas svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .node-label {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        height: 42px;
+        border-radius: 999px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 14px;
+        background: #ffffff;
+        border: 2px solid currentColor;
+        color: #7c3aed;
+        font-size: 17px;
+        font-weight: 700;
+        box-shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
+        white-space: nowrap;
+      }
+
+      .node-label.blue {
+        color: #2563eb;
+      }
+
+      .node-label.green {
+        color: #16a34a;
+      }
+
+      .node-label.orange {
+        color: #d97706;
+      }
+
+      .graph-side {
+        border-left: 1px solid #dde3ee;
+        padding: 26px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .search-box {
+        height: 56px;
+        border-radius: 16px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        color: #6b7280;
+        font-size: 20px;
+      }
+
+      .result-item {
+        border-radius: 16px;
+        border: 1px solid #e5e7eb;
+        background: #f9fafb;
+        padding: 18px;
+      }
+
+      .result-item strong {
+        display: block;
+        font-size: 20px;
+      }
+
+      .result-item span {
+        display: block;
+        margin-top: 8px;
+        color: #6b7280;
+        font-size: 16px;
+        line-height: 1.38;
+      }
+
+      .export-stage {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 520px 1fr;
+        gap: 26px;
+      }
+
+      .export-menu {
+        align-self: center;
+        border-radius: 24px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        padding: 24px;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+      }
+
+      .export-menu h3 {
+        font-size: 32px;
+        margin-bottom: 20px;
+      }
+
+      .export-option {
+        height: 58px;
+        border-radius: 16px;
+        border: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 18px;
+        margin-top: 12px;
+        color: #374151;
+        font-size: 20px;
+        font-weight: 700;
+        background: #f9fafb;
+      }
+
+      .flashcard-wrap {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 22px;
+      }
+
+      .flip-card {
+        align-self: center;
+        height: 330px;
+        perspective: 1200px;
+      }
+
+      .flip-inner {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        transform-style: preserve-3d;
+      }
+
+      .flip-face {
+        position: absolute;
+        inset: 0;
+        border-radius: 24px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        backface-visibility: hidden;
+        padding: 36px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+      }
+
+      .flip-face h3 {
+        font-size: 30px;
+        line-height: 1.4;
+      }
+
+      .flip-back {
+        transform: rotateY(180deg);
+        background: #f0fdf4;
+        border-color: #bbf7d0;
+      }
+
+      .rating-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .rating-row span {
+        height: 38px;
+        border-radius: 10px;
+        padding: 0 12px;
+        display: flex;
+        align-items: center;
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .flow-comparison {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 520px 1fr;
+        gap: 34px;
+      }
+
+      .flow-column {
+        border-radius: 24px;
+        border: 1px solid #dde3ee;
+        background: #ffffff;
+        padding: 30px;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.08);
+      }
+
+      .flow-column h3 {
+        font-size: 30px;
+        margin-bottom: 28px;
+      }
+
+      .flow-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .flow-step {
+        min-height: 62px;
+        border-radius: 18px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        gap: 14px;
+        color: #374151;
+        font-size: 21px;
+        font-weight: 700;
+      }
+
+      .flow-step .num {
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: #e5e7eb;
+        color: #374151;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+      }
+
+      .flow-column.easy .flow-step {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+
+      .flow-column.easy .num {
+        background: #2563eb;
+        color: #ffffff;
+      }
+
+      .final-logo {
+        position: absolute;
+        right: 100px;
+        bottom: 190px;
+        width: 520px;
+        border-radius: 32px;
+        background: #ffffff;
+        border: 1px solid #dde3ee;
+        padding: 38px;
+        box-shadow: 0 24px 70px rgba(37, 99, 235, 0.14);
+      }
+
+      .final-logo h2 {
+        font-size: 64px;
+        font-weight: 850;
+        color: #111827;
+      }
+
+      .final-logo p {
+        margin-top: 12px;
+        color: #6b7280;
+        font-size: 24px;
+        line-height: 1.4;
+      }
+
+      .caption {
+        position: absolute;
+        left: 300px;
+        right: 300px;
+        bottom: 44px;
+        min-height: 76px;
+        border-radius: 24px;
+        background: rgba(17, 24, 39, 0.9);
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 14px 28px;
+        font-size: 34px;
+        line-height: 1.32;
+        font-weight: 700;
+        box-shadow: 0 18px 48px rgba(17, 24, 39, 0.22);
+      }
+
+      .transition {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .wipe {
+        width: 126%;
+        height: 100%;
+        background: #f5f7fb;
+        border-left: 16px solid #2563eb;
+        transform: translateX(-116%);
+        box-shadow: 30px 0 80px rgba(37, 99, 235, 0.18);
+      }
+
+      .muted {
+        color: #6b7280;
+      }
+
+      .blue {
+        color: #2563eb;
+      }
+
+      .purple {
+        color: #7c3aed;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="120"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio
+        id="narration"
+        data-start="0"
+        data-duration="120"
+        data-track-index="30"
+        src="assets/narration.wav"
+        data-volume="1"
+      ></audio>
+
+      <section id="scene-1" class="clip scene" data-start="0" data-duration="8" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">EasyPaper 新手科普</div>
+            <h1 class="title">读论文，难点不只是打开 PDF</h1>
+            <p class="subtitle">示意画面：左边是普通 PDF 阅读，右边是把论文放进 EasyPaper 的阅读流程。</p>
+          </div>
+          <div class="badge">内容与高亮均为示意</div>
+        </div>
+        <div class="workarea two-col">
+          <div class="panel">
+            <div class="panel-head"><span>普通 PDF 软件</span><span class="muted">paper.pdf</span></div>
+            <div class="panel-body">
+              <div class="pdf-page">
+                <div class="paper-title"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line medium"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line short"></div>
+                <div class="equation">L = Σ p(y|x)</div>
+                <div class="paper-line long"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line medium"></div>
+                <div class="figure-box"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line medium"></div>
+              </div>
+              <div class="bubble-stack">
+                <div class="problem-bubble">术语</div>
+                <div class="problem-bubble">结论</div>
+                <div class="problem-bubble">数据</div>
+                <div class="problem-bubble">笔记</div>
+                <div class="problem-bubble">复习</div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="upload-card">
+              <div>
+                <div class="app-title">EasyPaper</div>
+                <p class="app-sub">上传论文，获得翻译、简化、高亮和可带走的知识。</p>
+              </div>
+              <div class="upload-zone">
+                <div class="upload-icon">↑</div>
+                <div class="upload-main">
+                  <strong>上传 PDF</strong>
+                  <span>也可以粘贴 arXiv、OpenReview 或 PDF 链接</span>
+                </div>
+              </div>
+              <div class="control-row">
+                <div class="pill-control active-blue">翻译为中文</div>
+                <div class="pill-control">简化英文</div>
+                <div class="pill-control active-yellow">AI 高亮</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-2" class="clip scene" data-start="8" data-duration="12" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">普通 PDF 的问题</div>
+            <h1 class="title">每一步都要自己判断</h1>
+          </div>
+          <div class="badge">流程示意</div>
+        </div>
+        <div class="workarea two-col">
+          <div class="panel">
+            <div class="panel-head"><span>paper.pdf</span><span class="muted">搜索 / 划线 / 批注</span></div>
+            <div class="panel-body">
+              <div class="pdf-page">
+                <div class="paper-title"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line medium"></div>
+                <div class="paper-line long"></div>
+                <div class="equation">score = f(model, data)</div>
+                <div class="paper-line long"></div>
+                <div class="paper-line short"></div>
+                <div class="figure-box"></div>
+                <div class="paper-line long"></div>
+                <div class="paper-line medium"></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-body">
+              <div class="action-loop">
+                <div class="manual-step"><div class="icon">⌘C</div><strong>复制段落</strong><span>把不懂的句子复制出去。</span></div>
+                <div class="manual-step"><div class="icon">译</div><strong>切到翻译器</strong><span>翻译完再找回原文位置。</span></div>
+                <div class="manual-step"><div class="icon">✎</div><strong>自己划线</strong><span>判断结论、数据、方法。</span></div>
+                <div class="manual-step"><div class="icon">笔</div><strong>写到笔记</strong><span>读完后还要整理和复习。</span></div>
+              </div>
+              <div class="loop-arrow"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-3" class="clip scene" data-start="20" data-duration="12" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">EasyPaper 的入口</div>
+            <h1 class="title">先把论文放进阅读流程</h1>
+          </div>
+          <div class="badge">功能入口示意</div>
+        </div>
+        <div class="workarea">
+          <div class="panel">
+            <div class="upload-card">
+              <div class="app-title">EasyPaper</div>
+              <p class="app-sub">上传文件，或者粘贴论文链接；选择阅读模式；需要时打开 AI 高亮。</p>
+              <div class="upload-zone">
+                <div class="upload-icon">PDF</div>
+                <div class="upload-main">
+                  <strong>拖入一篇英文论文</strong>
+                  <span>最大 50MB，支持本地 PDF</span>
+                </div>
+                <div class="url-button">上传</div>
+              </div>
+              <div class="url-bar">
+                https://arxiv.org/pdf/2602.09000
+                <div class="url-button">开始处理</div>
+              </div>
+              <div class="control-row">
+                <div class="pill-control active-blue">翻译为中文</div>
+                <div class="pill-control">简化英文</div>
+                <div class="pill-control active-yellow">AI 高亮</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-4" class="clip scene" data-start="32" data-duration="13" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">第一层帮助</div>
+            <h1 class="title">降低进入门槛，保留版式</h1>
+          </div>
+          <div class="badge">截图为项目素材</div>
+        </div>
+        <div class="workarea two-col">
+          <div class="panel">
+            <div class="panel-head"><span>普通做法</span><span class="muted">多次切换</span></div>
+            <div class="panel-body">
+              <div class="workflow-fragments">
+                <div class="fragment"><div class="fragment-dot"></div>复制一段英文</div>
+                <div class="fragment"><div class="fragment-dot"></div>切到翻译器</div>
+                <div class="fragment"><div class="fragment-dot"></div>回 PDF 找位置</div>
+                <div class="fragment"><div class="fragment-dot"></div>重新整理笔记</div>
+              </div>
+            </div>
+          </div>
+          <div class="screenshot-frame">
+            <img src="assets/translate-cn.png" alt="中文翻译效果示意" />
+            <div class="layout-callouts">
+              <div class="callout-line" style="left: 80px; top: 210px; width: 410px;"></div>
+              <div class="callout-label" style="left: 500px; top: 188px;">图表位置保留</div>
+              <div class="callout-line" style="left: 88px; top: 392px; width: 320px;"></div>
+              <div class="callout-label" style="left: 420px; top: 370px;">公式位置保留</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-5" class="clip scene" data-start="45" data-duration="17" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">第二层帮助</div>
+            <h1 class="title">先找到该看的句子</h1>
+          </div>
+          <div class="badge">高亮结果为示意</div>
+        </div>
+        <div class="workarea">
+          <div class="reader-grid">
+            <div class="screenshot-frame">
+              <img src="assets/highlights.png" alt="AI 高亮效果示意" />
+              <div class="highlight-sweep highlight-yellow"></div>
+              <div class="highlight-sweep highlight-blue"></div>
+              <div class="highlight-sweep highlight-green"></div>
+              <div class="page-jump">跳到第 3 页</div>
+            </div>
+            <div class="highlight-panel">
+              <div class="highlight-panel-head">
+                <strong>高亮句子</strong>
+                <div class="filter-row">
+                  <div class="filter-chip active">全部</div>
+                  <div class="filter-chip">结论</div>
+                  <div class="filter-chip">方法</div>
+                  <div class="filter-chip">数据</div>
+                </div>
+              </div>
+              <div class="highlight-row">
+                <strong><span class="dot" style="background:#fde68a;"></span>核心结论</strong>
+                <p>示意：模型在主要任务上提升效果。</p>
+              </div>
+              <div class="highlight-row">
+                <strong><span class="dot" style="background:#bfdbfe;"></span>方法创新</strong>
+                <p>示意：提出新的训练或检索流程。</p>
+              </div>
+              <div class="highlight-row">
+                <strong><span class="dot" style="background:#bbf7d0;"></span>关键数据</strong>
+                <p>示意：实验指标、比例、样本数量。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-6" class="clip scene" data-start="62" data-duration="10" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">判断边界</div>
+            <h1 class="title">AI 给入口，人做判断</h1>
+          </div>
+          <div class="badge">不替代人工核对</div>
+        </div>
+        <div class="workarea">
+          <div class="context-card">
+            <div class="context-paper">
+              <div class="paper-title"></div>
+              <div class="paper-line long"></div>
+              <div class="paper-line long"></div>
+              <div class="paper-line medium"></div>
+              <div class="paper-line long"></div>
+              <div class="paper-line long"></div>
+              <div class="paper-line short"></div>
+              <div class="equation">result = evidence + context</div>
+              <div class="paper-line long"></div>
+              <div class="paper-line medium"></div>
+              <div class="paper-line long"></div>
+              <div class="paper-line short"></div>
+            </div>
+            <div class="context-highlight"></div>
+            <div class="verify-tag">需要回到上下文核对</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-7" class="clip scene" data-start="72" data-duration="16" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">第三层帮助</div>
+            <h1 class="title">从页面，变成结构</h1>
+          </div>
+          <div class="badge">知识提取示意</div>
+        </div>
+        <div class="workarea">
+          <div class="structure-grid">
+            <div class="sentence-card">示意句子：该方法在数据集上提升指标，并说明了主要限制。</div>
+            <div class="entity-cards">
+              <div class="entity-card"><small>方法</small><strong>新训练流程</strong><span>论文中提出的处理步骤。</span></div>
+              <div class="entity-card"><small>数据集</small><strong>Benchmark A</strong><span>实验使用的数据来源。</span></div>
+              <div class="entity-card"><small>指标</small><strong>Accuracy</strong><span>用于比较结果的数值。</span></div>
+              <div class="entity-card"><small>关系</small><strong>方法 → 数据集</strong><span>在该数据集上评估。</span></div>
+            </div>
+          </div>
+          <div class="knowledge-screens">
+            <div class="screenshot-frame"><img src="assets/knowledge-detail.png" alt="知识库论文详情示意" /></div>
+            <div class="screenshot-frame"><img src="assets/findings.png" alt="研究发现示意" /></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-8" class="clip scene" data-start="88" data-duration="12" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">多篇论文之后</div>
+            <h1 class="title">论文之间能互相连接</h1>
+          </div>
+          <div class="badge">知识图谱示意</div>
+        </div>
+        <div class="workarea">
+          <div class="graph-stage">
+            <div class="graph-canvas">
+              <svg viewBox="0 0 1180 690" aria-label="知识图谱示意">
+                <line class="graph-edge" x1="250" y1="210" x2="550" y2="330" stroke="#c4b5fd" stroke-width="4" />
+                <line class="graph-edge" x1="550" y1="330" x2="820" y2="190" stroke="#bfdbfe" stroke-width="4" />
+                <line class="graph-edge" x1="550" y1="330" x2="820" y2="470" stroke="#bbf7d0" stroke-width="4" />
+                <line class="graph-edge" x1="250" y1="500" x2="550" y2="330" stroke="#fed7aa" stroke-width="4" />
+                <line class="graph-edge" x1="820" y1="190" x2="990" y2="345" stroke="#c4b5fd" stroke-width="4" />
+              </svg>
+              <div class="node-label purple" style="left: 250px; top: 210px;">论文 A</div>
+              <div class="node-label blue" style="left: 550px; top: 330px;">检索增强方法</div>
+              <div class="node-label green" style="left: 820px; top: 190px;">数据集</div>
+              <div class="node-label orange" style="left: 820px; top: 470px;">指标</div>
+              <div class="node-label purple" style="left: 250px; top: 500px;">论文 B</div>
+              <div class="node-label blue" style="left: 990px; top: 345px;">任务</div>
+            </div>
+            <div class="graph-side">
+              <div class="search-box">搜索：检索增强方法</div>
+              <div class="result-item"><strong>相关论文</strong><span>论文 A、论文 B 都连接到同一个方法节点。</span></div>
+              <div class="result-item"><strong>反向查找</strong><span>从方法、任务、数据集找到论文。</span></div>
+              <div class="result-item"><strong>关系类型</strong><span>使用、评估于、优于、类似。</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-9" class="clip scene" data-start="100" data-duration="12" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">读完以后</div>
+            <h1 class="title">还能带走和复习</h1>
+          </div>
+          <div class="badge">导出与闪卡示意</div>
+        </div>
+        <div class="workarea">
+          <div class="export-stage">
+            <div class="export-menu">
+              <h3>导出知识</h3>
+              <div class="export-option"><span>EasyPaper JSON</span><span>.epaper.json</span></div>
+              <div class="export-option"><span>Obsidian Vault</span><span>.zip</span></div>
+              <div class="export-option"><span>BibTeX</span><span>.bib</span></div>
+              <div class="export-option"><span>CSL-JSON</span><span>.json</span></div>
+              <div class="export-option"><span>CSV</span><span>.zip</span></div>
+            </div>
+            <div class="flashcard-wrap">
+              <div class="screenshot-frame"><img src="assets/flashcards.png" alt="闪卡复习示意" /></div>
+              <div class="flip-card">
+                <div class="flip-inner">
+                  <div class="flip-face">
+                    <h3>这个方法解决了什么问题？</h3>
+                    <p class="subtitle" style="font-size:20px;">点击查看答案</p>
+                  </div>
+                  <div class="flip-face flip-back">
+                    <h3>它把论文内容变成可复习的问题。</h3>
+                    <div class="rating-row">
+                      <span style="background:#ef4444;">忘记</span>
+                      <span style="background:#3b82f6;">一般</span>
+                      <span style="background:#22c55e;">熟练</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-10" class="clip scene" data-start="112" data-duration="8" data-track-index="1">
+        <div class="scene-header">
+          <div>
+            <div class="eyebrow">总结</div>
+            <h1 class="title">减少的是读论文时的人工步骤</h1>
+          </div>
+          <div class="badge">从一篇论文开始</div>
+        </div>
+        <div class="workarea">
+          <div class="flow-comparison">
+            <div class="flow-column">
+              <h3>普通 PDF</h3>
+              <div class="flow-steps">
+                <div class="flow-step"><span class="num">1</span>打开</div>
+                <div class="flow-step"><span class="num">2</span>划线</div>
+                <div class="flow-step"><span class="num">3</span>搜索</div>
+              </div>
+            </div>
+            <div class="flow-column easy">
+              <h3>EasyPaper</h3>
+              <div class="flow-steps">
+                <div class="flow-step"><span class="num">1</span>导入</div>
+                <div class="flow-step"><span class="num">2</span>翻译 / 简化</div>
+                <div class="flow-step"><span class="num">3</span>高亮</div>
+                <div class="flow-step"><span class="num">4</span>知识库</div>
+                <div class="flow-step"><span class="num">5</span>导出</div>
+                <div class="flow-step"><span class="num">6</span>复习</div>
+              </div>
+            </div>
+          </div>
+          <div class="final-logo">
+            <h2>EasyPaper</h2>
+            <p>上传或粘贴链接，选择模式，打开高亮。</p>
+          </div>
+        </div>
+      </section>
+
+      <div id="caption-1" class="clip caption" data-start="0" data-duration="8" data-track-index="10">读论文，难点不只是打开 PDF</div>
+      <div id="caption-2" class="clip caption" data-start="8" data-duration="12" data-track-index="10">普通 PDF：每一步都要自己判断</div>
+      <div id="caption-3" class="clip caption" data-start="20" data-duration="12" data-track-index="10">EasyPaper：先把论文放进阅读流程</div>
+      <div id="caption-4" class="clip caption" data-start="32" data-duration="13" data-track-index="10">降低进入门槛，保留版式</div>
+      <div id="caption-5" class="clip caption" data-start="45" data-duration="17" data-track-index="10">先找到该看的句子</div>
+      <div id="caption-6" class="clip caption" data-start="62" data-duration="10" data-track-index="10">AI 给入口，人做判断</div>
+      <div id="caption-7" class="clip caption" data-start="72" data-duration="16" data-track-index="10">从页面，变成结构</div>
+      <div id="caption-8" class="clip caption" data-start="88" data-duration="12" data-track-index="10">多篇论文之间能互相连接</div>
+      <div id="caption-9" class="clip caption" data-start="100" data-duration="12" data-track-index="10">读完以后，还能带走和复习</div>
+      <div id="caption-10" class="clip caption" data-start="112" data-duration="8" data-track-index="10">EasyPaper 减少的是读论文时的人工步骤</div>
+
+      <div id="transition-1" class="clip transition" data-start="7.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-2" class="clip transition" data-start="19.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-3" class="clip transition" data-start="31.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-4" class="clip transition" data-start="44.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-5" class="clip transition" data-start="61.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-6" class="clip transition" data-start="71.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-7" class="clip transition" data-start="87.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-8" class="clip transition" data-start="99.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+      <div id="transition-9" class="clip transition" data-start="111.65" data-duration="0.7" data-track-index="20" data-layout-allow-overflow><div class="wipe"></div></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+
+      function intro(scene, start) {
+        tl.from(`${scene} .eyebrow`, { y: 18, opacity: 0, duration: 0.45, immediateRender: false }, start + 0.15);
+        tl.from(`${scene} .title`, { y: 34, opacity: 0, duration: 0.55, immediateRender: false }, start + 0.25);
+        tl.from(`${scene} .subtitle, ${scene} .badge`, { y: 20, opacity: 0, duration: 0.45, stagger: 0.08, immediateRender: false }, start + 0.45);
+      }
+
+      intro("#scene-1", 0);
+      intro("#scene-2", 8);
+      intro("#scene-3", 20);
+      intro("#scene-4", 32);
+      intro("#scene-5", 45);
+      intro("#scene-6", 62);
+      intro("#scene-7", 72);
+      intro("#scene-8", 88);
+      intro("#scene-9", 100);
+      intro("#scene-10", 112);
+
+      tl.from("#scene-1 .panel", { y: 46, opacity: 0, duration: 0.7, stagger: 0.14, immediateRender: false }, 0.85);
+      tl.from("#scene-1 .problem-bubble", { x: -28, opacity: 0, duration: 0.38, stagger: 0.12, immediateRender: false }, 1.35);
+      tl.from("#scene-1 .upload-zone, #scene-1 .pill-control", { y: 22, opacity: 0, duration: 0.42, stagger: 0.08, immediateRender: false }, 1.6);
+
+      tl.from("#scene-2 .panel", { y: 42, opacity: 0, duration: 0.6, stagger: 0.12, immediateRender: false }, 8.8);
+      tl.from("#scene-2 .manual-step", { scale: 0.94, opacity: 0, duration: 0.45, stagger: 0.18, immediateRender: false }, 9.45);
+      tl.from("#scene-2 .loop-arrow", { rotation: -80, scale: 0.7, opacity: 0, duration: 0.65, immediateRender: false }, 10.35);
+      tl.to("#scene-2 .loop-arrow", { rotation: 360, duration: 8.5, ease: "none" }, 11.05);
+
+      tl.from("#scene-3 .panel", { y: 44, opacity: 0, duration: 0.65, immediateRender: false }, 20.85);
+      tl.from("#scene-3 .upload-zone", { scale: 0.95, opacity: 0, duration: 0.5, immediateRender: false }, 21.45);
+      tl.from("#scene-3 .url-bar", { y: 24, opacity: 0, duration: 0.45, immediateRender: false }, 22.1);
+      tl.from("#scene-3 .pill-control", { y: 22, opacity: 0, duration: 0.4, stagger: 0.18, immediateRender: false }, 22.65);
+      tl.to("#scene-3 .pill-control.active-blue", { scale: 1.06, duration: 0.3, yoyo: true, repeat: 1 }, 25.1);
+      tl.to("#scene-3 .pill-control.active-yellow", { scale: 1.06, duration: 0.3, yoyo: true, repeat: 1 }, 26.3);
+
+      tl.from("#scene-4 .fragment", { x: -52, opacity: 0, duration: 0.45, stagger: 0.18, immediateRender: false }, 33.1);
+      tl.from("#scene-4 .screenshot-frame", { x: 52, opacity: 0, duration: 0.65, immediateRender: false }, 33.35);
+      tl.from("#scene-4 .callout-line", { scaleX: 0, duration: 0.55, stagger: 0.3, immediateRender: false }, 35.4);
+      tl.from("#scene-4 .callout-label", { y: 14, opacity: 0, duration: 0.4, stagger: 0.3, immediateRender: false }, 35.75);
+      tl.to("#scene-4 .fragment", { x: 30, duration: 0.42, stagger: 0.08, yoyo: true, repeat: 1 }, 39.2);
+
+      tl.from("#scene-5 .reader-grid", { y: 44, opacity: 0, duration: 0.65, immediateRender: false }, 45.95);
+      tl.from(".highlight-yellow", { scaleX: 0, transformOrigin: "left center", duration: 0.7, immediateRender: false }, 48.0);
+      tl.from(".highlight-blue", { scaleX: 0, transformOrigin: "left center", duration: 0.7, immediateRender: false }, 50.0);
+      tl.from(".highlight-green", { scaleX: 0, transformOrigin: "left center", duration: 0.7, immediateRender: false }, 52.0);
+      tl.from("#scene-5 .highlight-row", { x: 32, opacity: 0, duration: 0.42, stagger: 0.18, immediateRender: false }, 53.1);
+      tl.from("#scene-5 .page-jump", { x: 42, opacity: 0, duration: 0.45, immediateRender: false }, 56.0);
+      tl.to("#scene-5 .page-jump", { y: 18, duration: 0.35, yoyo: true, repeat: 1 }, 57.2);
+
+      tl.from("#scene-6 .context-card", { y: 48, opacity: 0, duration: 0.65, immediateRender: false }, 62.9);
+      tl.from("#scene-6 .context-highlight", { scaleX: 0, transformOrigin: "left center", duration: 0.75, immediateRender: false }, 64.25);
+      tl.from("#scene-6 .verify-tag", { y: 18, opacity: 0, duration: 0.45, immediateRender: false }, 65.2);
+      tl.to("#scene-6 .context-card", { scale: 1.025, duration: 1.2, yoyo: true, repeat: 1 }, 66.4);
+
+      tl.from("#scene-7 .sentence-card", { x: -44, opacity: 0, duration: 0.65, immediateRender: false }, 73.0);
+      tl.from("#scene-7 .entity-card", { y: 32, opacity: 0, duration: 0.45, stagger: 0.14, immediateRender: false }, 74.15);
+      tl.from("#scene-7 .knowledge-screens .screenshot-frame", { y: 34, opacity: 0, duration: 0.5, stagger: 0.16, immediateRender: false }, 78.2);
+      tl.to("#scene-7 .sentence-card", { x: 20, duration: 0.35, yoyo: true, repeat: 1 }, 80.8);
+
+      tl.from("#scene-8 .graph-stage", { y: 44, opacity: 0, duration: 0.65, immediateRender: false }, 88.95);
+      tl.from("#scene-8 .node-label", { scale: 0.7, opacity: 0, duration: 0.45, stagger: 0.12, immediateRender: false }, 89.75);
+      tl.from("#scene-8 .graph-edge", { strokeDasharray: 700, strokeDashoffset: 700, duration: 0.8, stagger: 0.12, immediateRender: false }, 90.45);
+      tl.from("#scene-8 .result-item", { x: 26, opacity: 0, duration: 0.4, stagger: 0.14, immediateRender: false }, 92.25);
+      tl.to("#scene-8 .node-label.blue", { scale: 1.08, duration: 0.35, yoyo: true, repeat: 3 }, 94.6);
+
+      tl.from("#scene-9 .export-menu", { x: -46, opacity: 0, duration: 0.65, immediateRender: false }, 100.9);
+      tl.from("#scene-9 .export-option", { x: -24, opacity: 0, duration: 0.36, stagger: 0.12, immediateRender: false }, 101.55);
+      tl.from("#scene-9 .screenshot-frame", { y: 36, opacity: 0, duration: 0.55, immediateRender: false }, 103.6);
+      tl.from("#scene-9 .flip-card", { y: 36, opacity: 0, duration: 0.55, immediateRender: false }, 104.1);
+      tl.to("#scene-9 .flip-inner", { rotationY: 180, duration: 0.8, ease: "power3.inOut" }, 106.4);
+
+      tl.from("#scene-10 .flow-column", { y: 48, opacity: 0, duration: 0.6, stagger: 0.16, immediateRender: false }, 112.85);
+      tl.from("#scene-10 .flow-step", { x: -24, opacity: 0, duration: 0.32, stagger: 0.08, immediateRender: false }, 113.6);
+      tl.from("#scene-10 .final-logo", { scale: 0.92, opacity: 0, duration: 0.65, immediateRender: false }, 116.0);
+      tl.to("#scene-10 .final-logo", { scale: 1.03, duration: 0.5, yoyo: true, repeat: 1 }, 117.2);
+
+      document.querySelectorAll(".transition").forEach((transition) => {
+        const start = Number(transition.dataset.start);
+        tl.fromTo(
+          transition.querySelector(".wipe"),
+          { xPercent: -116 },
+          { xPercent: 104, duration: 0.7, ease: "power3.inOut", immediateRender: false },
+          start,
+        );
+      });
+
+      document.querySelectorAll(".caption").forEach((caption) => {
+        const start = Number(caption.dataset.start);
+        tl.from(caption, { y: 24, opacity: 0, duration: 0.35, immediateRender: false }, start + 0.18);
+      });
+      tl.to("#scene-10, .caption", { opacity: 0, duration: 0.6 }, 119.35);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

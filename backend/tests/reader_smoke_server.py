@@ -78,6 +78,40 @@ with Session(engine) as session:
         )
     )
     session.commit()
+
+# Legacy AI highlights used page-local IDs (fitz-A0 on both pages). A viewer
+# keyed by annotation ID across the document must not mix their coordinates.
+highlight_source, highlight_pdf = folder / "highlight-source.pdf", folder / "highlights.pdf"
+highlight_dual = folder / "highlight-dual.pdf"
+with fitz.open() as pdf:
+    for i, text in enumerate(("Our method reduces memory use by 30%.", "Experiments improve accuracy to 92%.")):
+        pdf.new_page(width=595, height=842).insert_text((54, 200 + 180 * i), text, fontsize=14)
+    highlight_source.write_bytes(pdf.tobytes())
+    for page in pdf:
+        mark = page.add_highlight_annot(page.search_for(page.get_text().strip()))
+        mark.set_info(title="method_innovation", content=page.get_text().strip())
+        mark.set_colors(stroke=(0.7, 0.85, 1.0))
+        mark.set_opacity(0.4)
+        mark.update()
+    highlight_pdf.write_bytes(pdf.tobytes())
+with fitz.open(highlight_source) as en, fitz.open(highlight_pdf) as zh, fitz.open() as both:
+    for i in range(len(en)):
+        both.insert_pdf(en, from_page=i, to_page=i)
+        both.insert_pdf(zh, from_page=i, to_page=i)
+    highlight_dual.write_bytes(both.tobytes())
+with Session(engine) as session:
+    session.add(
+        Task(
+            task_id="ai-highlight-fixture",
+            filename="AI highlights.pdf",
+            user_id=1,
+            status=TaskStatus.COMPLETED,
+            original_pdf_path=str(highlight_source),
+            result_pdf_path=str(highlight_pdf),
+            result_dual_pdf_path=str(highlight_dual),
+        )
+    )
+    session.commit()
 config = SimpleNamespace(
     llm=LLMConfig(api_key="fixture-only"),
     processing=SimpleNamespace(max_concurrent=1),
@@ -148,6 +182,17 @@ async def prepare():
     original = next(v for v in reading.synced_reader.versions(bundle["document_id"]) if v.kind == "original")
     reading.synced_reader.snapshot(
         bundle["document_id"], "simple", make_pdf(SIMPLE), Path(original.path).parent, json.loads(original.index_json)
+    )
+    with Session(engine) as session:
+        task = session.get(Task, "ai-highlight-fixture")
+    bundle = await reading.synced_reader.open_task(task, 1)
+    original = next(v for v in reading.synced_reader.versions(bundle["document_id"]) if v.kind == "original")
+    reading.synced_reader.snapshot(
+        bundle["document_id"],
+        "simple",
+        highlight_source.read_bytes(),
+        Path(original.path).parent,
+        json.loads(original.index_json),
     )
 
 

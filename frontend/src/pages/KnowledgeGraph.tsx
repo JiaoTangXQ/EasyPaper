@@ -1,425 +1,364 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Search, Loader2, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  ArrowRight,
+  ArrowUpRight,
+  X,
+  List,
+  Network,
+  NotebookPen,
+  ChevronRight,
+  ChevronLeft,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { clientToGraphPoint } from "@/lib/graph";
-import { toast } from "sonner";
+import { PageHeader, EmptyState } from "@/components/workspace/PageHeader";
+import GraphCanvas from "@/components/knowledge/GraphCanvas";
+import { getApiErrorMessage } from "@/lib/errors";
+import {
+  indexGraph,
+  layoutGraph,
+  relationLabel,
+  TYPE_LABELS,
+  type GraphNode,
+  type GraphEdge,
+} from "@/lib/knowledge-graph";
 import api from "@/lib/api";
+import "./knowledge-graph.css";
 
-interface GraphNode {
-    id: string;
-    name: string;
-    type: string;
-    definition?: string;
-    importance: number;
-    paper_id: string;
-}
+export default function KnowledgeGraph() {
+  const navigate = useNavigate();
+  const [data, setData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [view, setView] = useState(() => (window.matchMedia("(max-width: 700px)").matches ? "list" : "graph"));
+  const [scope, setScope] = useState<"focus" | "all">("focus");
+  const [search, setSearch] = useState("");
+  const [type, setType] = useState("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [group, setGroup] = useState(0);
+  const inspector = useRef<HTMLElement>(null);
+  const explorer = useRef<HTMLElement>(null);
+  const graph = useMemo(() => indexGraph(data.nodes, data.edges), [data]);
+  const selected = selectedId ? graph.byId.get(selectedId) : undefined;
+  const selectedEdges = selected ? graph.adjacency.get(selected.id)! : [];
+  const query = search.trim().toLocaleLowerCase();
+  const matching = useMemo(
+    () =>
+      graph.ranked.filter(
+        (node) => (type === "all" || node.type === type) && node.name.toLocaleLowerCase().includes(query),
+      ),
+    [graph, type, query],
+  );
+  const types = useMemo(() => [...new Set(data.nodes.map((node) => node.type))], [data.nodes]);
+  const focusedLayout = useMemo(() => layoutGraph(data.nodes, data.edges, selectedId), [data, selectedId]);
+  const neighborCount = Math.max(0, focusedLayout.nodes.length - 1);
+  const groupCount = Math.max(1, Math.ceil(neighborCount / 8));
+  const visibleGroup = Math.min(group, groupCount - 1);
+  const layout = useMemo(() => {
+    if (scope === "all") return layoutGraph(data.nodes, data.edges, null);
+    const visibleNodes = [
+      focusedLayout.nodes[0],
+      ...focusedLayout.nodes.slice(1 + visibleGroup * 8, 1 + (visibleGroup + 1) * 8),
+    ].filter(Boolean);
+    return layoutGraph(visibleNodes, data.edges, selectedId);
+  }, [data, scope, focusedLayout, selectedId, visibleGroup]);
+  const paperCount = useMemo(() => new Set(data.nodes.map((node) => node.paper_id).filter(Boolean)).size, [data.nodes]);
 
-interface GraphEdge {
-    id: string;
-    source: string;
-    target: string;
-    type: string;
-    description?: string;
-}
+  const fetchGraph = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await api.get<{ nodes: GraphNode[]; edges: GraphEdge[] }>("/api/knowledge/graph");
+      setData(response.data);
+      setError("");
+      setSelectedId((old) =>
+        response.data.nodes.some((node) => node.id === old)
+          ? old
+          : (indexGraph(response.data.nodes, response.data.edges).ranked[0]?.id ?? null),
+      );
+    } catch (err) {
+      setError(getApiErrorMessage(err, "无法加载图谱，请重试。"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void fetchGraph();
+  }, [fetchGraph]);
 
-const TYPE_COLORS: Record<string, string> = {
-    method: "#3b82f6",
-    model: "#8b5cf6",
-    dataset: "#22c55e",
-    metric: "#f59e0b",
-    concept: "#6b7280",
-    task: "#f43f5e",
-    person: "#06b6d4",
-    organization: "#f97316",
-};
-
-const TYPE_LABELS: Record<string, string> = {
-    method: "方法",
-    model: "模型",
-    dataset: "数据集",
-    metric: "指标",
-    concept: "概念",
-    task: "任务",
-    person: "人物",
-    organization: "机构",
-};
-
-const KnowledgeGraph = () => {
-    const navigate = useNavigate();
-    const [nodes, setNodes] = useState<GraphNode[]>([]);
-    const [edges, setEdges] = useState<GraphEdge[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [search, setSearch] = useState("");
-    const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [zoom, setZoom] = useState(1);
-    const [offset, setOffset] = useState({ x: 0, y: 0 });
-    const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
-    const animRef = useRef<number>(0);
-    const dragRef = useRef<{ dragging: boolean; startX: number; startY: number; nodeId?: string }>({
-        dragging: false,
-        startX: 0,
-        startY: 0,
+  const selectNode = (id: string) => {
+    setSelectedId(id);
+    setGroup(0);
+    setScope("focus");
+    setSearch("");
+    setType("all");
+    requestAnimationFrame(() => {
+      if (inspector.current) inspector.current.scrollTop = 0;
+      if (window.matchMedia("(max-width: 1100px)").matches) {
+        inspector.current?.scrollIntoView({ block: "start", behavior: "instant" });
+        inspector.current?.focus({ preventScroll: true });
+      }
     });
-
-    const fetchGraph = useCallback(async () => {
-        try {
-            const response = await api.get("/api/knowledge/graph");
-            setNodes(response.data.nodes);
-            setEdges(response.data.edges);
-        } catch {
-            toast.error("加载知识图谱失败。");
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        fetchGraph();
-    }, [fetchGraph]);
-
-    // Initialize positions using force-directed layout
-    useEffect(() => {
-        if (nodes.length === 0) return;
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        const w = canvas.width;
-        const h = canvas.height;
-
-        // Initialize random positions
-        const positions: Record<string, { x: number; y: number; vx: number; vy: number }> = {};
-        nodes.forEach((node) => {
-            positions[node.id] = {
-                x: w / 2 + (Math.random() - 0.5) * w * 0.6,
-                y: h / 2 + (Math.random() - 0.5) * h * 0.6,
-                vx: 0,
-                vy: 0,
-            };
-        });
-
-        // Simple force simulation
-        let iterations = 0;
-        const maxIterations = 200;
-
-        const simulate = () => {
-            if (iterations >= maxIterations) {
-                const finalPos: Record<string, { x: number; y: number }> = {};
-                Object.entries(positions).forEach(([id, p]) => {
-                    finalPos[id] = { x: p.x, y: p.y };
-                });
-                setNodePositions(finalPos);
-                return;
-            }
-
-            // Repulsion between all nodes
-            const nodeIds = Object.keys(positions);
-            for (let i = 0; i < nodeIds.length; i++) {
-                for (let j = i + 1; j < nodeIds.length; j++) {
-                    const a = positions[nodeIds[i]];
-                    const b = positions[nodeIds[j]];
-                    const dx = b.x - a.x;
-                    const dy = b.y - a.y;
-                    const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-                    const force = 5000 / (dist * dist);
-                    const fx = (dx / dist) * force;
-                    const fy = (dy / dist) * force;
-                    a.vx -= fx;
-                    a.vy -= fy;
-                    b.vx += fx;
-                    b.vy += fy;
-                }
-            }
-
-            // Attraction along edges
-            edges.forEach((edge) => {
-                const a = positions[edge.source];
-                const b = positions[edge.target];
-                if (!a || !b) return;
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const force = (dist - 120) * 0.01;
-                const fx = (dx / Math.max(dist, 1)) * force;
-                const fy = (dy / Math.max(dist, 1)) * force;
-                a.vx += fx;
-                a.vy += fy;
-                b.vx -= fx;
-                b.vy -= fy;
-            });
-
-            // Center gravity
-            nodeIds.forEach((id) => {
-                const p = positions[id];
-                p.vx += (w / 2 - p.x) * 0.001;
-                p.vy += (h / 2 - p.y) * 0.001;
-                // Damping
-                p.vx *= 0.9;
-                p.vy *= 0.9;
-                p.x += p.vx;
-                p.y += p.vy;
-                // Bounds
-                p.x = Math.max(30, Math.min(w - 30, p.x));
-                p.y = Math.max(30, Math.min(h - 30, p.y));
-            });
-
-            iterations++;
-            animRef.current = requestAnimationFrame(simulate);
-        };
-
-        simulate();
-        return () => cancelAnimationFrame(animRef.current);
-    }, [nodes, edges]);
-
-    // Draw canvas
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || Object.keys(nodePositions).length === 0) return;
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.save();
-        ctx.translate(offset.x, offset.y);
-        ctx.scale(zoom, zoom);
-
-        // Draw edges
-        edges.forEach((edge) => {
-            const from = nodePositions[edge.source];
-            const to = nodePositions[edge.target];
-            if (!from || !to) return;
-
-            ctx.beginPath();
-            ctx.moveTo(from.x, from.y);
-            ctx.lineTo(to.x, to.y);
-            ctx.strokeStyle = "#d1d5db";
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // Edge label
-            const midX = (from.x + to.x) / 2;
-            const midY = (from.y + to.y) / 2;
-            ctx.font = "9px sans-serif";
-            ctx.fillStyle = "#9ca3af";
-            ctx.textAlign = "center";
-            ctx.fillText(edge.type, midX, midY - 4);
-        });
-
-        // Draw nodes
-        const filteredLower = search.toLowerCase();
-        nodes.forEach((node) => {
-            const pos = nodePositions[node.id];
-            if (!pos) return;
-
-            const isHighlighted = search && node.name.toLowerCase().includes(filteredLower);
-            const isSelected = selectedNode?.id === node.id;
-            const radius = 6 + node.importance * 10;
-
-            // Node circle
-            ctx.beginPath();
-            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-            ctx.fillStyle = TYPE_COLORS[node.type] || "#6b7280";
-            if (search && !isHighlighted) {
-                ctx.globalAlpha = 0.2;
-            }
-            ctx.fill();
-            ctx.globalAlpha = 1;
-
-            if (isSelected || isHighlighted) {
-                ctx.strokeStyle = isSelected ? "#000" : TYPE_COLORS[node.type] || "#6b7280";
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            }
-
-            // Node label
-            ctx.font = isSelected ? "bold 11px sans-serif" : "10px sans-serif";
-            ctx.fillStyle = search && !isHighlighted ? "#d1d5db" : "#374151";
-            ctx.textAlign = "center";
-            ctx.fillText(node.name, pos.x, pos.y + radius + 12);
-        });
-
-        ctx.restore();
-    }, [nodePositions, edges, nodes, search, selectedNode, zoom, offset]);
-
-    // Canvas click handler
-    const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const { x, y } = clientToGraphPoint(
-            { x: e.clientX, y: e.clientY },
-            rect,
-            { width: canvas.width, height: canvas.height },
-            offset,
-            zoom,
-        );
-
-        const clicked = nodes.find((node) => {
-            const pos = nodePositions[node.id];
-            if (!pos) return false;
-            const radius = 6 + node.importance * 10;
-            const dx = pos.x - x;
-            const dy = pos.y - y;
-            return dx * dx + dy * dy <= radius * radius;
-        });
-
-        setSelectedNode(clicked || null);
-    };
-
-    // Canvas pan
-    const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        dragRef.current = { dragging: true, startX: e.clientX - offset.x, startY: e.clientY - offset.y };
-    };
-
-    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!dragRef.current.dragging) return;
-        setOffset({
-            x: e.clientX - dragRef.current.startX,
-            y: e.clientY - dragRef.current.startY,
-        });
-    };
-
-    const handleMouseUp = () => {
-        dragRef.current.dragging = false;
-    };
-
-    if (loading) {
-        return (
-            <div className="flex h-[calc(100vh-8rem)] items-center justify-center">
-                <Loader2 className="h-12 w-12 animate-spin text-primary" />
-            </div>
-        );
+  };
+  const showGraph = () => {
+    setView("graph");
+    setSearch("");
+    setType("all");
+    if (window.matchMedia("(max-width: 1100px)").matches) {
+      requestAnimationFrame(() => explorer.current?.scrollIntoView({ block: "start", behavior: "instant" }));
     }
+  };
+  const showingResults = query.length > 0 || type !== "all";
 
-    if (nodes.length === 0) {
-        return (
-            <div className="flex h-[calc(100vh-8rem)] flex-col items-center justify-center space-y-4">
-                <p className="text-muted-foreground">
-                    知识图谱中还没有实体。先从已处理文档中提取知识。
-                </p>
-                <Button onClick={() => navigate("/knowledge")}>
-                    <ArrowLeft className="mr-2 h-4 w-4" /> 知识库
-                </Button>
-            </div>
-        );
-    }
-
-    return (
-        <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between rounded-xl border bg-white p-3 shadow-sm">
-                <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => navigate("/knowledge")}>
-                        <ArrowLeft className="mr-2 h-4 w-4" /> 返回
-                    </Button>
-                    <div className="h-4 w-px bg-gray-200 mx-2 hidden sm:block" />
-                    <h1 className="text-sm font-medium hidden sm:block">知识图谱</h1>
-                    <span className="text-xs text-muted-foreground hidden sm:block">
-                        （{nodes.length} 个实体，{edges.length} 条关系）
-                    </span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="relative w-48">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                        <Input
-                            placeholder="搜索实体..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            className="pl-8 h-8 text-xs"
-                        />
-                    </div>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}>
-                        <ZoomIn className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setZoom((z) => Math.max(z - 0.2, 0.3))}>
-                        <ZoomOut className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => {
-                            setZoom(1);
-                            setOffset({ x: 0, y: 0 });
-                        }}
-                    >
-                        <Maximize2 className="h-3.5 w-3.5" />
-                    </Button>
-                </div>
-            </div>
-
-            {/* Graph Canvas */}
-            <div className="relative flex-1 rounded-xl border bg-white shadow-sm overflow-hidden">
-                <canvas
-                    ref={canvasRef}
-                    width={1200}
-                    height={800}
-                    className="w-full h-full cursor-grab active:cursor-grabbing"
-                    onClick={handleCanvasClick}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onMouseLeave={handleMouseUp}
-                />
-
-                {/* Legend */}
-                <div className="absolute bottom-4 left-4 flex flex-wrap gap-2 rounded-lg bg-white/90 border p-2 text-xs shadow-sm">
-                    {Object.entries(TYPE_COLORS).map(([type, color]) => (
-                        <div key={type} className="flex items-center gap-1">
-                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-                            <span className="text-gray-600">{TYPE_LABELS[type] || type}</span>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Selected Node Detail */}
-                {selectedNode && (
-                    <div className="absolute top-4 right-4 w-64 rounded-lg bg-white border shadow-lg p-4 space-y-2">
-                        <div className="flex items-center justify-between">
-                            <h3 className="font-medium text-sm">{selectedNode.name}</h3>
-                            <span
-                                className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium text-white")}
-                                style={{ backgroundColor: TYPE_COLORS[selectedNode.type] }}
-                            >
-                                {selectedNode.type}
-                            </span>
-                        </div>
-                        {selectedNode.definition && (
-                            <p className="text-xs text-muted-foreground">{selectedNode.definition}</p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                            重要性：{Math.round(selectedNode.importance * 100)}%
-                        </p>
-                        {/* Related edges */}
-                        <div className="border-t pt-2 space-y-1">
-                            <p className="text-xs font-medium text-muted-foreground">相关关系：</p>
-                            {edges
-                                .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
-                                .slice(0, 5)
-                                .map((e) => {
-                                    const other = e.source === selectedNode.id
-                                        ? nodes.find((n) => n.id === e.target)
-                                        : nodes.find((n) => n.id === e.source);
-                                    const direction = e.source === selectedNode.id ? "→" : "←";
-                                    return (
-                                        <p key={e.id} className="text-xs text-gray-600">
-                                            {direction} <span className="font-medium">{e.type}</span>{" "}
-                                            {other?.name || "?"}
-                                        </p>
-                                    );
-                                })}
-                        </div>
-                    </div>
-                )}
-            </div>
+  return (
+    <div className="page-stack concept-page">
+      <PageHeader title="关联图谱" description="从一个概念出发，沿着关系读懂论文。" />
+      <nav className="knowledge-nav" aria-label="知识浏览方式">
+        <NavLink end to="/knowledge">
+          <NotebookPen size={17} />
+          按论文查看
+        </NavLink>
+        <NavLink to="/knowledge/graph">
+          <Network size={17} />
+          关联图谱
+        </NavLink>
+      </nav>
+      {loading ? (
+        <div className="workspace-empty" role="status">
+          <Loader2 className="animate-spin text-primary" />
+          <p>正在加载概念与关系…</p>
         </div>
-    );
-};
-
-export default KnowledgeGraph;
+      ) : error ? (
+        <EmptyState title="图谱加载失败" description={error} error>
+          <Button onClick={() => void fetchGraph()}>重试</Button>
+        </EmptyState>
+      ) : data.nodes.length === 0 ? (
+        <EmptyState
+          title="还没有可查看的关系"
+          description="先在“我的论文”中整理一篇论文的知识，概念和关系会显示在这里。"
+        >
+          <Button onClick={() => navigate("/dashboard")}>
+            选择一篇论文
+            <ArrowRight />
+          </Button>
+        </EmptyState>
+      ) : (
+        <>
+          <div className="concept-toolbar">
+            <div className="concept-search-controls">
+              <div className="search-field concept-search">
+                <Search size={16} />
+                <Input
+                  aria-label="查找概念名称"
+                  placeholder="搜索概念、方法或模型"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                {search && (
+                  <button className="concept-search-clear" aria-label="清除搜索" onClick={() => setSearch("")}>
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+              <select aria-label="筛选概念类型" value={type} onChange={(event) => setType(event.target.value)}>
+                <option value="all">全部类型</option>
+                {types.map((value) => (
+                  <option key={value} value={value}>
+                    {TYPE_LABELS[value] || value}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="concept-view-switch" role="group" aria-label="图谱浏览方式">
+              <Button variant="ghost" size="sm" aria-pressed={view === "graph" && !showingResults} onClick={showGraph}>
+                <Network size={16} />
+                图谱
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-pressed={view === "list" || showingResults}
+                onClick={() => setView("list")}
+              >
+                <List size={16} />
+                列表
+              </Button>
+            </div>
+          </div>
+          <div className="concept-summary">
+            <p>
+              <strong>{data.nodes.length}</strong> 个概念<span>·</span>
+              <strong>{graph.edges.length}</strong> 条关系<span>·</span>来自 {paperCount} 篇论文
+            </p>
+            <span>{showingResults ? `找到 ${matching.length} 个概念` : "点击概念查看定义与来源"}</span>
+          </div>
+          <div className="concept-workbench">
+            <section className="concept-explorer" aria-label="概念浏览" ref={explorer}>
+              {view === "graph" && !showingResults ? (
+                <>
+                  <div className="concept-map-heading">
+                    <div>
+                      <h2>{scope === "focus" ? "当前概念的关系" : "全部关系"}</h2>
+                      <p>
+                        {scope === "focus"
+                          ? `${focusedLayout.nodes.length} 个概念 · ${focusedLayout.edges.length} 条直接关系`
+                          : "选择一个概念，展开它的直接关系"}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setScope((old) => (old === "focus" ? "all" : "focus"))}
+                    >
+                      {scope === "focus" ? "全局图谱" : "聚焦当前概念"}
+                      <ArrowUpRight size={15} />
+                    </Button>
+                  </div>
+                  <GraphCanvas layout={layout} selectedId={selectedId} onSelect={selectNode} />
+                  <div className="concept-map-footer">
+                    <span>
+                      <i />
+                      当前概念
+                    </span>
+                    {scope === "focus" && groupCount > 1 ? (
+                      <div className="concept-group-controls" role="group" aria-label="关联概念分组">
+                        <span>
+                          {visibleGroup * 8 + 1}–{Math.min((visibleGroup + 1) * 8, neighborCount)} / {neighborCount}{" "}
+                          个关联概念
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="上一组关联概念"
+                          disabled={visibleGroup === 0}
+                          onClick={() => setGroup(visibleGroup - 1)}
+                        >
+                          <ChevronLeft size={15} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="下一组关联概念"
+                          disabled={visibleGroup === groupCount - 1}
+                          onClick={() => setGroup(visibleGroup + 1)}
+                        >
+                          <ChevronRight size={15} />
+                        </Button>
+                      </div>
+                    ) : (
+                      <p>拖动画布移动 · 点击节点展开</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="concept-map-heading">
+                    <div>
+                      <h2>{showingResults ? "搜索结果" : "全部概念"}</h2>
+                      <p>选择概念，查看关联及其论文来源</p>
+                    </div>
+                    <span className="concept-result-count">{matching.length} 项</span>
+                  </div>
+                  {matching.length ? (
+                    <div className="concept-list">
+                      {matching.map((node) => (
+                        <button
+                          key={node.id}
+                          aria-label={`${node.name} ${TYPE_LABELS[node.type] || node.type}`}
+                          aria-pressed={node.id === selectedId}
+                          onClick={() => selectNode(node.id)}
+                        >
+                          <span className="concept-list-text">
+                            <strong>{node.name}</strong>
+                            <span>
+                              {TYPE_LABELS[node.type] || node.type} · {graph.adjacency.get(node.id)!.length} 条关系
+                            </span>
+                          </span>
+                          <ChevronRight size={17} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState title="没有匹配的概念" description="试试其他名称，或清除类型筛选。">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSearch("");
+                          setType("all");
+                        }}
+                      >
+                        清除筛选
+                      </Button>
+                    </EmptyState>
+                  )}
+                </>
+              )}
+            </section>
+            <aside className="concept-inspector" aria-label="选中的概念" tabIndex={-1} ref={inspector}>
+              {selected ? (
+                <>
+                  <div className="concept-inspector-heading">
+                    <span className="concept-type-label">{TYPE_LABELS[selected.type] || selected.type}</span>
+                    <span className="concept-selection-label">
+                      <i />
+                      当前概念
+                    </span>
+                  </div>
+                  <h2>{selected.name}</h2>
+                  <p className={cn("concept-definition", !selected.definition && "is-empty")}>
+                    {selected.definition || "该概念暂未提取定义，可回到来源论文查看。"}
+                  </p>
+                  {selected.paper_id && (
+                    <Button
+                      variant="outline"
+                      className="concept-source"
+                      onClick={() => navigate(`/knowledge/paper/${selected.paper_id}`)}
+                    >
+                      查看来源论文
+                      <ArrowUpRight size={16} />
+                    </Button>
+                  )}
+                  {(view === "list" || showingResults) && (
+                    <Button variant="ghost" className="concept-show-map" onClick={showGraph}>
+                      <Network size={16} />
+                      在图谱中展开
+                    </Button>
+                  )}
+                  <div className="concept-relations-heading">
+                    <h3>关联关系</h3>
+                    <span>{selectedEdges.length}</span>
+                  </div>
+                  <div className="concept-relations">
+                    {selectedEdges.map((edge) => {
+                      const outgoing = edge.source === selected.id;
+                      const other = graph.byId.get(outgoing ? edge.target : edge.source)!;
+                      return (
+                        <button key={edge.id} onClick={() => selectNode(other.id)}>
+                          <span className="concept-relation-label">
+                            {relationLabel(edge.type, outgoing)}
+                            <ArrowRight size={12} />
+                          </span>
+                          <span className="concept-relation-name">
+                            {other.name}
+                            <ChevronRight size={15} />
+                          </span>
+                          {edge.description && <span className="concept-relation-description">{edge.description}</span>}
+                        </button>
+                      );
+                    })}
+                    {!selectedEdges.length && <p className="concept-no-relations">暂未整理出关联关系。</p>}
+                  </div>
+                </>
+              ) : (
+                <EmptyState title="选择一个概念" description="查看定义、关系和来源论文。" />
+              )}
+            </aside>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

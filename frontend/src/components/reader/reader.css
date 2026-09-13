@@ -6,21 +6,95 @@
     "PingFang SC",
     sans-serif;
 }
+.synced-workspace:fullscreen {
+  width: 100%;
+  background: var(--paper);
+}
+.reader-chrome {
+  flex: 0 0 auto;
+}
+.synced-workspace[data-fullscreen] {
+  position: relative;
+  overflow: hidden;
+  --reader-chrome-transform: translateY(0);
+  --reader-chrome-duration: 280ms;
+  --reader-chrome-pointer-events: auto;
+}
+.synced-workspace[data-chrome-hidden] {
+  --reader-chrome-transform: translateY(calc(-1 * (var(--reader-chrome-height) + var(--reader-native-chrome-height))));
+  --reader-chrome-duration: 200ms;
+  --reader-chrome-pointer-events: none;
+}
+.synced-workspace[data-fullscreen] .reader-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 40;
+  transform: var(--reader-chrome-transform);
+  transition: transform var(--reader-chrome-duration) cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: var(--reader-chrome-pointer-events);
+}
+.synced-workspace[data-fullscreen] .reader-sidepanel {
+  margin-top: var(--reader-chrome-height);
+}
+.reader-chrome-reveal {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 45;
+  height: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+.reader-chrome-reveal:focus-visible::after {
+  content: "显示阅读工具栏";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 0 0 6px 6px;
+  background: var(--surface);
+  color: var(--accent);
+}
+@media (pointer: coarse) {
+  .reader-chrome-reveal {
+    left: calc(50% - 30px);
+    right: auto;
+    width: 60px;
+    height: 28px;
+  }
+  .reader-chrome-reveal::after {
+    content: "";
+    position: absolute;
+    top: 5px;
+    left: 16px;
+    width: 28px;
+    height: 4px;
+    border-radius: 4px;
+    background: var(--muted);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .synced-workspace[data-fullscreen] .reader-chrome {
+    transition: none;
+  }
+}
 .synced-workspace ::selection {
-  background: #cfe5d6;
-  color: #203f2c;
+  background: #f2d8d2;
+  color: #4f1d16;
 }
 .synced-workspace :is(button, input, select, textarea):focus-visible {
-  outline: 2px solid #28614b;
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 .synced-workspace :is(input, select, textarea) {
-  caret-color: #28614b;
+  caret-color: var(--accent);
 }
 .synced-topbar {
   gap: 16px;
   padding: 12px 18px;
-  background: #faf9f6;
+  background: var(--paper);
 }
 .synced-topbar .reader-brand {
   flex: 1 1 220px;
@@ -40,7 +114,7 @@
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f0f1ec;
+  background: var(--paper);
 }
 .reader-version-switch button {
   display: flex;
@@ -51,16 +125,16 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #535f56;
+  color: var(--muted);
   font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
 }
 .reader-version-switch button:hover {
-  background: #e1e7df;
+  background: var(--line);
 }
 .reader-version-switch button[aria-pressed="true"] {
-  background: #28614b;
+  background: var(--accent);
   color: #fff;
 }
 .version-unready {
@@ -83,7 +157,7 @@
   padding: 5px 20px;
   border-bottom: 1px solid var(--line);
   background: #fff;
-  color: #59625b;
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -93,7 +167,7 @@
   gap: 5px;
 }
 .reader-savebar .save-complete {
-  color: #28614b;
+  color: var(--accent);
 }
 .reader-savebar .save-pending {
   color: #845515;
@@ -129,7 +203,7 @@
   line-height: 1.7;
 }
 .reader-text-button {
-  color: #28614b;
+  color: var(--accent);
   background: none;
   border: 0;
   padding: 8px;
@@ -175,7 +249,7 @@
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fafbf9;
+  background: var(--paper);
   color: var(--ink);
   font-size: 13px;
 }
@@ -192,12 +266,12 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-color: #bbc5bd transparent;
+  scrollbar-color: #bbb8b2 transparent;
   scrollbar-width: thin;
 }
 .annotation-row {
   padding: 16px;
-  border-bottom: 1px solid #e7eae5;
+  border-bottom: 1px solid var(--line);
 }
 .annotation-row-head {
   display: flex;
@@ -209,7 +283,7 @@
   border: 0;
   padding: 2px 0;
   background: none;
-  color: #28614b;
+  color: var(--accent);
   font-size: 12px;
   cursor: pointer;
 }
@@ -230,7 +304,7 @@
     14px/1.7 Georgia,
     "Songti SC",
     serif;
-  color: #323b34;
+  color: var(--ink);
 }
 .annotation-row textarea {
   display: block;
@@ -238,24 +312,24 @@
   min-height: 58px;
   resize: vertical;
   padding: 8px;
-  border: 1px solid #e0e5dd;
+  border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fbfcf9;
+  background: var(--paper);
   color: var(--ink);
   font-size: 13px;
   line-height: 1.5;
 }
 .annotation-row textarea::placeholder,
 .annotation-filters input::placeholder {
-  color: #647063;
+  color: var(--muted);
 }
 .annotation-kind {
-  color: #5b655b;
+  color: var(--muted);
   font-size: 13px;
 }
 .annotation-alignment {
   margin: 9px 0;
-  color: #646a60;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
 }
@@ -275,7 +349,7 @@
   padding: 3px 0;
   border: 0;
   background: transparent;
-  color: #28614b;
+  color: var(--accent);
   cursor: pointer;
   font-size: 11px;
 }
@@ -288,14 +362,14 @@
   margin-left: auto;
 }
 .annotation-row.is-deleted {
-  background: #f6f7f3;
+  background: var(--paper);
 }
 .annotation-empty {
   display: grid;
   justify-items: center;
   gap: 12px;
   padding: 45px 24px;
-  color: #636d64;
+  color: var(--muted);
   text-align: center;
   font-size: 13px;
   line-height: 1.75;
@@ -310,12 +384,12 @@
   gap: 5px 15px;
   padding: 10px 16px;
   border-top: 1px solid var(--line);
-  background: #fafbf8;
+  background: var(--paper);
 }
 .reader-field {
   display: grid;
   gap: 6px;
-  color: #4c5c50;
+  color: var(--muted);
   font-size: 12px;
 }
 .reader-field textarea {
@@ -326,7 +400,7 @@
   background: none;
   padding: 6px 0;
   text-align: left;
-  color: #28614b;
+  color: var(--accent);
   font-size: 12px;
   line-height: 1.6;
   cursor: pointer;
@@ -427,5 +501,221 @@
   }
   .annotation-row-actions button {
     min-height: 36px;
+  }
+}
+/* Document chrome uses the same action palette as the library. */
+.synced-workspace ::selection {
+  background: #f2d8d2;
+  color: #4f1d16;
+}
+.synced-workspace :is(button, input, select, textarea):focus-visible {
+  outline-color: var(--accent);
+}
+.synced-workspace :is(input, select, textarea) {
+  caret-color: var(--accent);
+}
+.synced-topbar {
+  background: #fff;
+  padding: 10px 16px;
+  min-height: 62px;
+  gap: 12px;
+}
+.reader-version-switch {
+  background: var(--paper);
+  border-color: transparent;
+}
+.reader-version-switch button {
+  color: var(--muted);
+}
+.reader-version-switch button:hover {
+  background: #eceae5;
+}
+.reader-version-switch button[aria-pressed="true"] {
+  background: white;
+  color: var(--ink);
+  box-shadow: inset 0 -2px var(--accent);
+  font-weight: 600;
+}
+.reader-savebar {
+  padding-block: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  background: #fafaf9;
+}
+.reader-persistence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: center;
+  min-width: 0;
+}
+.reader-persistence span,
+.reader-persistence button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-align: left;
+}
+.reader-persistence button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+}
+.reader-persistence button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.reader-savebar .save-complete {
+  color: #29674f;
+}
+.reader-savebar .save-muted {
+  color: var(--muted);
+}
+.reader-sidepanel {
+  flex-basis: 370px;
+  width: 370px;
+}
+.reader-sidepanel .assistant-head {
+  padding: 14px 18px;
+}
+.reader-sidepanel .assistant-head button {
+  min-width: 34px;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+}
+.reader-panel-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.reader-panel-tabs button {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 13px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.reader-panel-tabs button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.synced-workspace .assistant-body {
+  align-content: start;
+  padding: 20px 18px;
+  gap: 16px;
+  flex: 1;
+}
+.synced-workspace .summary-view h3 {
+  font:
+    600 20px/1.6 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.synced-workspace .summary-view p,
+.synced-workspace .answer p {
+  font-size: 14px;
+  line-height: 1.85;
+}
+.synced-workspace .summary-view strong,
+.synced-workspace .answer h4 {
+  font-size: 13px;
+  color: var(--accent);
+}
+.synced-workspace .answer {
+  background: #f5f4f0;
+  padding: 16px;
+  gap: 9px;
+}
+.reader-field,
+.annotation-kind,
+.annotation-alignment {
+  color: var(--muted);
+}
+.annotation-alignment {
+  font-size: 12px;
+}
+.annotation-row blockquote {
+  font-family: inherit;
+  color: var(--ink);
+}
+.annotation-row textarea,
+.annotation-filters input {
+  background: #fafaf9;
+  border-color: var(--line);
+}
+.annotation-row-head button,
+.annotation-row-actions button,
+.annotation-footer button,
+.reader-evidence,
+.reader-text-button {
+  color: var(--accent);
+}
+.annotation-row-actions button,
+.annotation-footer button {
+  font-size: 12px;
+  min-height: 32px;
+}
+.annotation-footer {
+  background: var(--paper);
+}
+.annotation-list {
+  scrollbar-color: #bbb8b2 transparent;
+}
+.version-unready {
+  font-size: 11px;
+}
+@media (max-width: 1000px) {
+  .synced-workspace .reader-sidepanel {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+    border-left: 0;
+  }
+  .reader-layout.ask-open .pdf-reading {
+    visibility: hidden;
+  }
+  .synced-topbar .reader-brand {
+    flex-basis: calc(100% - 280px);
+  }
+}
+@media (max-width: 760px) {
+  .synced-topbar {
+    padding: 8px 10px;
+    gap: 7px;
+  }
+  .synced-topbar .reader-brand {
+    flex-basis: calc(100% - 210px);
+  }
+  .reader-savebar {
+    font-size: 11px;
+    gap: 5px 10px;
+  }
+  .reader-version-switch button {
+    flex-direction: column;
+    gap: 0;
+    min-height: 40px;
+  }
+  .version-unready {
+    display: inline;
+    font-size: 10px;
+  }
+  .reader-version-detail {
+    margin-left: 0;
+  }
+  .synced-topbar .reader-actions {
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+  .annotation-row-actions button,
+  .annotation-footer button {
+    min-height: 40px;
   }
 }

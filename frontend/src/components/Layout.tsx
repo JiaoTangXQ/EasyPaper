@@ -1,87 +1,109 @@
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
+import { Files, GraduationCap, LogOut, NotebookPen, Settings, UserRound } from "lucide-react";
+import Brand from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LogOut, User as UserIcon, FileText, Brain } from "lucide-react";
 
-const Layout = () => {
-    const navigate = useNavigate();
-    const location = useLocation();
-    const isReader = location.pathname.startsWith("/reader/");
-    const userEmail = localStorage.getItem("email") || "用户";
-
-    const handleLogout = () => {
-        localStorage.removeItem("token");
-        localStorage.removeItem("email");
-        navigate("/login");
+export default function Layout() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const email = localStorage.getItem("email") || "我的账户";
+  const [dueCount, setDueCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (pathname.startsWith("/reader/")) return;
+    window.scrollTo(0, 0);
+    let cancelled = false;
+    void api
+      .get<unknown[]>("/api/knowledge/flashcards/due?limit=100")
+      .then(({ data }) => {
+        if (!cancelled) setDueCount(data.length);
+      })
+      .catch(() => {
+        if (!cancelled) setDueCount(null);
+      });
+    return () => {
+      cancelled = true;
     };
-
+  }, [pathname]);
+  if (pathname.startsWith("/reader/"))
     return (
-        <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
-            {/* Header */}
-            {!isReader && <header className="sticky top-0 z-50 w-full border-b bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/60">
-                <div className="container mx-auto flex h-16 items-center justify-between px-4">
-                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/dashboard")}>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                            <FileText className="h-5 w-5" />
-                        </div>
-                        <span className="text-lg font-semibold tracking-tight">EasyPaper</span>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2 text-muted-foreground hover:text-primary"
-                            onClick={() => navigate("/knowledge")}
-                        >
-                            <Brain className="h-4 w-4" />
-                            <span className="hidden sm:inline">知识库</span>
-                        </Button>
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="relative h-9 w-9 rounded-full">
-                                    <Avatar className="h-9 w-9">
-                                        <AvatarImage src="/avatars/01.png" alt="@user" />
-                                        <AvatarFallback className="bg-primary/10 text-primary">
-                                            <UserIcon className="h-4 w-4" />
-                                        </AvatarFallback>
-                                    </Avatar>
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent className="w-56" align="end" forceMount>
-                                <DropdownMenuLabel className="font-normal">
-                                    <div className="flex flex-col space-y-1">
-                                        <p className="text-sm font-medium leading-none">我的账户</p>
-                                        <p className="text-xs leading-none text-muted-foreground">
-                                            {userEmail}
-                                        </p>
-                                    </div>
-                                </DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
-                                    <LogOut className="mr-2 h-4 w-4" />
-                                    <span>退出登录</span>
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    </div>
-                </div>
-            </header>}
-
-            {/* Main Content */}
-            <main className={location.pathname.startsWith("/reader/") ? "reader-main" : "container mx-auto py-6 px-4"}>
-                <Outlet />
-            </main>
-        </div>
+      <div className="reader-main">
+        <Outlet />
+      </div>
     );
-};
-
-export default Layout;
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#workspace-content">
+        跳到页面内容
+      </a>
+      <aside className="app-sidebar">
+        <Link className="app-brand" to="/dashboard">
+          <Brand />
+        </Link>
+        <nav className="app-navigation" aria-label="主要导航">
+          <NavLink to="/dashboard">
+            <Files size={19} />
+            <span>我的论文</span>
+          </NavLink>
+          <Link
+            to="/knowledge"
+            className={pathname.startsWith("/knowledge") && pathname !== "/knowledge/review" ? "active" : ""}
+            aria-current={pathname.startsWith("/knowledge") && pathname !== "/knowledge/review" ? "page" : undefined}
+          >
+            <NotebookPen size={19} />
+            <span>知识笔记</span>
+          </Link>
+          <NavLink to="/knowledge/review">
+            <GraduationCap size={19} />
+            <span>复习</span>
+            {dueCount !== null && dueCount > 0 && (
+              <span className="app-due-count" aria-label={`${dueCount >= 100 ? "至少 100" : dueCount} 张到期卡片`}>
+                {dueCount >= 100 ? "100+" : dueCount}
+              </span>
+            )}
+          </NavLink>
+        </nav>
+        <div className="app-account">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="account-trigger" aria-label="打开账户菜单">
+                <UserRound size={18} />
+                <span>{email}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuLabel className="break-all font-normal">{email}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => navigate("/settings")}>
+                <Settings size={16} className="mr-2" />
+                连接设置
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  localStorage.removeItem("token");
+                  localStorage.removeItem("email");
+                  navigate("/login");
+                }}
+              >
+                <LogOut size={16} className="mr-2" />
+                退出登录
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </aside>
+      <main id="workspace-content" className="workspace-content">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
