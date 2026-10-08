@@ -1,4 +1,4 @@
-"""Adapt pdf2zh's synchronous translator to the application's Codex execution pool.
+"""Connect pdf2zh to the application's LLMs and document-wide simplification.
 
 pdf2zh currently hardcodes translator classes. Install one permanent dispatcher;
 per-request state travels through its public envs argument, never a global swap.
@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import inspect
 import threading
 from contextlib import contextmanager
+from functools import partial, wraps
+from types import SimpleNamespace
 
 from .ai_client import AIClient, AIError
+from .pdf_paragraph_flow import FLOW_KEY, ParagraphFlow
 from .pdf_word_layout import word_wrapping_layout
-from .simplification_guard import guarded_simplification, keep_source_label
+from .simplification_guard import simplify_preserving_fragments
 
 _INSTALL_LOCK = threading.Lock()
 _CONTEXT_KEY = "__easypaper_codex_executor__"
@@ -96,19 +100,28 @@ def install_pdf2zh_adapter():
                 if executor is not None:
                     instance = CodexTranslator(lang_in, lang_out, executor, prompt, ignore_cache)
                 else:
-                    instance = original(lang_in, lang_out, model, envs=envs, prompt=prompt, ignore_cache=ignore_cache)
+                    # pdf2zh persists provider envs to disk; request state must
+                    # never be passed into that configuration store.
+                    provider_envs = {
+                        k: v for k, v in (envs or {}).items() if k not in {_CONTEXT_KEY, _RECORDS_KEY, FLOW_KEY}
+                    }
+                    instance = original(
+                        lang_in, lang_out, model, envs=provider_envs, prompt=prompt, ignore_cache=ignore_cache
+                    )
                 records = (envs or {}).get(_RECORDS_KEY)
                 simplifying = lang_in == lang_out and prompt is not None
+                instance._easypaper_raw_translate = instance.translate
+                instance._easypaper_flow = (envs or {}).get(FLOW_KEY)
                 if records is not None or simplifying:
                     translate = instance.translate
                     record_lock = threading.Lock()
 
                     def recorded_translate(text, *args, **kwargs):
                         translated = (
-                            text if simplifying and keep_source_label(text) else translate(text, *args, **kwargs)
+                            simplify_preserving_fragments(text, lambda complete: translate(complete, *args, **kwargs))
+                            if simplifying
+                            else translate(text, *args, **kwargs)
                         )
-                        if simplifying:
-                            translated = guarded_simplification(text, translated)
                         with record_lock:
                             record = {"source": text, "target": translated}
                             if hasattr(instance, "_easypaper_page"):
@@ -120,16 +133,61 @@ def install_pdf2zh_adapter():
                     instance.translate = recorded_translate
                 return instance
 
-        converter.OpenAIlikedTranslator = Dispatcher
         receive_layout = converter.TranslateConverter.receive_layout
         if getattr(converter, "__name__", "") == "pdf2zh.converter":
             receive_layout = word_wrapping_layout(receive_layout)
+            _install_document_flow()
 
         def recorded_layout(self, page):
             self.translator._easypaper_page = page.pageid
             return receive_layout(self, page)
 
         converter.TranslateConverter.receive_layout = recorded_layout
+        converter.OpenAIlikedTranslator = Dispatcher
+
+
+def _install_document_flow():
+    from pdf2zh import high_level
+
+    original = high_level.translate_patch
+    if getattr(original, "_easypaper_document_flow", False):
+        return
+    signature = inspect.signature(original)
+
+    @wraps(original)
+    def document_patch(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        options = bound.arguments
+        if options.get("lang_in") != "en" or options.get("lang_out") != "en" or options.get("prompt") is None:
+            return original(*args, **kwargs)
+        # Only our dispatcher supports deferred layouts. Other pdf2zh services
+        # continue to use the dependency's own pipeline.
+        if options.get("service", "").split(":", 1)[0] != "openailiked":
+            return original(*args, **kwargs)
+        envs = dict(options.get("envs") or {})
+        callback = options.get("callback")
+        flow = ParagraphFlow(
+            thread=options.get("thread", 1),
+            records=envs.get(_RECORDS_KEY),
+            callback=callback,
+            cancellation_event=options.get("cancellation_event"),
+        )
+        envs[FLOW_KEY] = flow
+        options["envs"] = envs
+        if options.get("model") is not None:
+            options["model"] = SimpleNamespace(predict=partial(flow.predict, options["model"]))
+        if callback:
+            options["callback"] = lambda progress: callback(
+                SimpleNamespace(stage="analyzing", n=progress.n, total=progress.total)
+            )
+        try:
+            patches = original(*bound.args, **bound.kwargs)
+            return flow.finish(patches)
+        finally:
+            flow.close()
+
+    document_patch._easypaper_document_flow = True
+    high_level.translate_patch = document_patch
 
 
 @contextmanager

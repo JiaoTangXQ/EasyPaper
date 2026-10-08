@@ -480,6 +480,7 @@ def public_units(index: dict, pages: set[int] | None = None) -> list[dict]:
 def recorded_mappings(source: dict, target: dict, records: list[dict]) -> list[dict]:
     """Recorded translator pairs establish paragraphs, not word-level equivalence."""
     mappings = []
+    flows = {}
     for record in records:
         src, dst = normalized(record["source"]), normalized(record["target"])
         if len(src) < 10 or len(dst) < 4 or re.search(r"\{v\d+\}", record["source"]):
@@ -502,13 +503,28 @@ def recorded_mappings(source: dict, target: dict, records: list[dict]) -> list[d
         if len({u["page"] for u in source_units}) != 1 or len({u["page"] for u in target_units}) != 1:
             continue
         if source_units and target_units:
-            mappings.append(
-                {
-                    "source_ids": [u["id"] for u in source_units],
-                    "target_ids": [u["id"] for u in target_units],
-                    "method": "translation-record",
-                }
-            )
+            mapping = {
+                "source_ids": [u["id"] for u in source_units],
+                "target_ids": [u["id"] for u in target_units],
+                "method": "translation-record",
+            }
+            if record.get("flow_group") is not None:
+                # A rewritten sentence may move words across the original page
+                # break. Only the complete group establishes correspondence.
+                flows.setdefault(record["flow_group"], []).append(mapping)
+            else:
+                mappings.append(mapping)
+    for group_id, group in flows.items():
+        expected = sum(record.get("flow_group") == group_id for record in records)
+        if len(group) != expected:
+            continue
+        mappings.append(
+            {
+                "source_ids": list(dict.fromkeys(uid for item in group for uid in item["source_ids"])),
+                "target_ids": list(dict.fromkeys(uid for item in group for uid in item["target_ids"])),
+                "method": "translation-record",
+            }
+        )
     return mappings
 
 

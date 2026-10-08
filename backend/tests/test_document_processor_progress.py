@@ -47,6 +47,7 @@ def test_real_pdf_pages_report_progress_and_use_configured_workers(engine, tmp_p
     manager = TaskManager()
     task = manager.create_task("fixture.pdf", mode=mode)
     page_states = []
+    model_states = []
     concurrent = peak = 0
     lock = threading.Lock()
     full_pool = threading.Event()
@@ -54,6 +55,7 @@ def test_real_pdf_pages_report_progress_and_use_configured_workers(engine, tmp_p
     def translate(_self, text):
         nonlocal concurrent, peak
         with lock:
+            model_states.append(manager.get_task(task.task_id).progress)
             concurrent += 1
             peak = max(peak, concurrent)
             if concurrent == 6:
@@ -90,9 +92,12 @@ def test_real_pdf_pages_report_progress_and_use_configured_workers(engine, tmp_p
     result = manager.get_task(task.task_id)
     assert result.status == TaskStatus.COMPLETED, result.error
     assert result.percent == 100
-    assert [state.message for state in page_states] == [f"正在{action}第 {n} / 3 页" for n in (1, 2, 3)]
+    page_action = "分析" if mode == "simplify" else action
+    assert [state.message for state in page_states] == [f"正在{page_action}第 {n} / 3 页" for n in (1, 2, 3)]
     # pdf2zh's callback runs BEFORE translating that page. Never count it as done.
-    assert [state.percent for state in page_states] == [30, 46, 63]
+    assert [state.percent for state in page_states] == ([30, 35, 40] if mode == "simplify" else [30, 46, 63])
+    if mode == "simplify":
+        assert all(45 <= state.percent < 80 for state in model_states)
     assert all(state.status == TaskStatus.REWRITING for state in page_states)
     assert peak == 6
     with fitz.open(result.result_pdf_path) as pdf:

@@ -25,7 +25,11 @@ SIMPLIFY_PROMPT = Template(
     "You are an expert at simplifying academic English. "
     "Rewrite the following text using simple, everyday vocabulary "
     "(CEFR A2/B1 level, approximately 2000 common English words). "
-    "Keep the same meaning. Keep all formula notations {v*} unchanged. "
+    "Keep the same meaning, technical claims, numbers, and citations. "
+    "Keep technical terms when simpler words would change their meaning. "
+    "Keep the rewritten text no longer than the source where possible. "
+    "Keep all formula notations {v*} unchanged. "
+    "Do not invent missing subjects or complete cut-off sentences. "
     "Output only the rewritten text, nothing else.\n\n"
     "Source Text: $text\n\n"
     "Simplified Text:"
@@ -177,6 +181,23 @@ class DocumentProcessor:
             def report_page_progress(progress) -> None:
                 total = progress.total
                 if not total:
+                    return
+                stage = getattr(progress, "stage", None)
+                if stage == "analyzing":
+                    self.task_manager.update_progress(
+                        task_id,
+                        TaskStatus.REWRITING,
+                        30 + int(15 * max(0, progress.n - 1) / total),
+                        f"正在分析第 {progress.n} / {total} 页",
+                    )
+                    return
+                if stage == "simplifying":
+                    self.task_manager.update_progress(
+                        task_id,
+                        TaskStatus.REWRITING,
+                        45 + int(34 * progress.n / total),
+                        f"正在简化正文（{progress.n} / {total}）",
+                    )
                     return
                 # pdf2zh increments n BEFORE processing the current page. Only
                 # preceding pages are complete; reserve 80+ for saving/highlighting.
