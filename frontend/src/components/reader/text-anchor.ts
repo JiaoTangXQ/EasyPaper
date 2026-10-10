@@ -22,8 +22,9 @@ function matchesAnchorText(actual: string, expected: string): boolean {
   return true;
 }
 
-/** Locate meaning-bearing text in this renderer's character stream. No source coordinates. */
-export function textAnchorRects(page: TextPage, anchor: TextAnchor): Rect[] {
+type LocatedAnchor = { indexes: number[]; start: number; needle: string };
+
+function locateAnchor(page: TextPage, anchor: TextAnchor): LocatedAnchor | null {
   let text = "";
   const indexes: number[] = [];
   const glyphs = new Map(
@@ -50,12 +51,12 @@ export function textAnchorRects(page: TextPage, anchor: TextAnchor): Rect[] {
       }
     }
     text += value;
-    for (let i = 0; i < value.length; i++) indexes.push(char.index);
+    for (let offset = 0; offset < value.length; offset++) indexes.push(char.index);
   }
   const needle = normalize(anchor.text);
-  if (!needle) return [];
+  if (!needle) return null;
   const literal = needle.split("\u0000").reduce((longest, part) => (part.length > longest.length ? part : longest), "");
-  if (!literal || (needle.includes("\u0000") && !/[\p{L}\p{N}]/u.test(literal))) return [];
+  if (!literal || (needle.includes("\u0000") && !/[\p{L}\p{N}]/u.test(literal))) return null;
   const literalOffset = needle.indexOf(literal);
   const prefix = normalize(anchor.prefix || "");
   const suffix = normalize(anchor.suffix || "");
@@ -69,9 +70,23 @@ export function textAnchorRects(page: TextPage, anchor: TextAnchor): Rect[] {
     matches.push(start);
   }
   // Repeated phrases without matching context must not land on an arbitrary occurrence.
-  if (matches.length !== 1) return [];
-  const start = matches[0];
-  return rectsWithinSlice(page.geometry, indexes[start], indexes[start + needle.length - 1]);
+  if (matches.length !== 1) return null;
+  return { indexes, start: matches[0], needle };
+}
+
+/** Inclusive PDF character indexes covered by one prepared span. */
+export function textAnchorCharRange(page: TextPage, anchor: TextAnchor): { from: number; to: number } | null {
+  const located = locateAnchor(page, anchor);
+  if (!located) return null;
+  const end = located.start + located.needle.length - 1;
+  return { from: located.indexes[located.start], to: located.indexes[end] };
+}
+
+/** Locate meaning-bearing text in this renderer's character stream. No source coordinates. */
+export function textAnchorRects(page: TextPage, anchor: TextAnchor): Rect[] {
+  const range = textAnchorCharRange(page, anchor);
+  if (!range) return [];
+  return rectsWithinSlice(page.geometry, range.from, range.to);
 }
 
 export function textRectsBounds(rects: Rect[]): Rect {

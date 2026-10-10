@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class StatePatch(BaseModel):
     block_id: str | None = None
     offset: float | None = Field(default=None, ge=-10000, le=100000, allow_inf_nan=False)
-    mode: Literal["chinese", "simple", "original", "bilingual"] | None = None
+    mode: Literal["chinese", "simple", "original", "bilingual", "gloss"] | None = None
     font_size: int | None = Field(default=None, ge=16, le=24)
     understood: list[str] | None = Field(default=None, max_length=20000)
     bookmarked_terms: list[str] | None = Field(default=None, max_length=2000)

@@ -68,6 +68,14 @@ class ReaderBuild(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ReaderGloss(SQLModel, table=True):
+    """Prepared click targets for the original PDF. Hidden until a word is clicked."""
+
+    document_id: str = Field(primary_key=True, foreign_key="readerdocument.id")
+    spans_json: str = "[]"
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ReaderAnnotation(SQLModel, table=True):
     id: str = Field(primary_key=True)
     document_id: str = Field(foreign_key="readerdocument.id", index=True)

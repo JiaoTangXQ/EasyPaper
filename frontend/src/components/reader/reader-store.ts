@@ -1,12 +1,13 @@
 import type { PdfAnnotationObject, Rect } from "@embedpdf/react-pdf-viewer";
 import type { TextAnchor } from "./text-anchor";
 
-export type ReaderMode = "original" | "chinese" | "simple" | "bilingual";
+export type ReaderMode = "original" | "chinese" | "simple" | "bilingual" | "gloss";
 export const versionNames: Record<ReaderMode, string> = {
   original: "原文",
   chinese: "中文译文",
   simple: "简化英语",
   bilingual: "双语对照",
+  gloss: "点读",
 };
 export type ReaderVersion = {
   id: string;

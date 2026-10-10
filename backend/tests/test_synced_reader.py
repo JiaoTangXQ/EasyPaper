@@ -2945,3 +2945,38 @@ def test_settled_document_poll_does_not_reload_each_annotation(reader):
         event.remove(reader.engine, "before_cursor_execute", record)
     assert len(bundle["annotations"]) == 41
     assert len(queries) == 1, "A one-second polling endpoint must read annotations in one batch"
+
+
+def test_gloss_mode_prepares_a_span_for_every_original_sentence(reader):
+    async def complete_json(_system, user, **_kwargs):
+        payload = json.loads(user)
+        return {
+            "sentences": [
+                {
+                    "id": sentence["id"],
+                    "spans": [
+                        {
+                            "text": sentence["text"],
+                            "category": "pattern",
+                            "zh": "整句意思",
+                            "role": "陈述这一句",
+                        }
+                    ],
+                }
+                for sentence in payload["sentences"]
+            ]
+        }
+
+    reader.reading.ai.complete_json = complete_json
+    document_id = reader.bundle["document_id"]
+    created = reader.client.post(f"/api/reader/documents/{document_id}/versions/gloss")
+    assert created.status_code == 202
+    gloss = reader.client.get(f"/api/reader/documents/{document_id}/gloss").json()
+    assert gloss["status"] == "completed"
+    assert gloss["spans"]
+    assert gloss["spans"][0]["label"] == "学术句式"
+    assert gloss["spans"][0]["role"] == "陈述这一句"
+    assert "anchor" in gloss["spans"][0]
+    bundle = reader.client.get(f"/api/reader/documents/{document_id}").json()
+    assert bundle["builds"][-1]["kind"] == "gloss"
+    assert bundle["builds"][-1]["status"] == "completed"

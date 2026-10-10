@@ -23,6 +23,7 @@ import { getApiErrorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import type { PdfViewerHandle } from "@/components/reader/PdfViewer";
 import PaperChat from "@/components/reader/PaperChat";
+import type { GlossSpan } from "@/components/reader/gloss-hit";
 import {
   cacheGet,
   cacheSet,
@@ -43,7 +44,7 @@ type Workspace = {
   pdf_message: string;
   paper_id: string;
 };
-const modes: ReaderMode[] = ["original", "chinese", "simple", "bilingual"];
+const modes: ReaderMode[] = ["original", "chinese", "simple", "bilingual", "gloss"];
 type ReaderPanel = "notes" | "overview";
 
 export default function Reader() {
@@ -78,6 +79,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [glossSpans, setGlossSpans] = useState<GlossSpan[] | null>(null);
   const [restoring, setRestoring] = useState(false);
   const restoreInput = useRef<HTMLInputElement>(null);
   const viewerRef = useRef<PdfViewerHandle>(null);
@@ -86,7 +88,9 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const requestedJump = useRef<{ versionId: string; page: number; point?: { x: number; y: number } }>();
   const positions = useRef(new Map<string, number>());
   const positionTimer = useRef<number>();
-  const currentVersions = bundle?.versions.filter((v) => v.kind === mode) || [];
+  const glossReady = Boolean(bundle?.builds.some((item) => item.kind === "gloss" && item.status === "completed"));
+  const viewKind = mode === "gloss" ? (glossReady ? "original" : null) : mode;
+  const currentVersions = viewKind ? bundle?.versions.filter((v) => v.kind === viewKind) || [] : [];
   const version = currentVersions.find((v) => v.id === revision) || currentVersions[0];
   const versionId = version?.id,
     versionUrl = version?.url,
@@ -94,6 +98,8 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const userId = bundle?.user_id;
   const versionRef = useRef(version);
   versionRef.current = version;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const awaitingResult = workspace !== null && !workspace.has_result;
   const reopen = reader.reopen;
   const build = bundle?.builds.find((b) => b.kind === mode);
@@ -140,6 +146,25 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
       cancelled = true;
     };
   }, [taskId]);
+
+  useEffect(() => {
+    if (mode !== "gloss" || !glossReady || !bundle) {
+      setGlossSpans(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .get<{ spans: GlossSpan[] }>(`/api/reader/documents/${bundle.document_id}/gloss`)
+      .then(({ data }) => {
+        if (!cancelled) setGlossSpans(data.spans);
+      })
+      .catch((err) => {
+        if (!cancelled) toast.error(getApiErrorMessage(err, "点读释义加载失败"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, glossReady, bundle?.document_id]);
 
   useEffect(() => {
     if (!awaitingResult) return;
@@ -262,7 +287,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
       if (block)
         positionTimer.current = window.setTimeout(() => {
           void api
-            .patch(`/api/reading/${taskId}/state`, { block_id: block.id, mode: version.kind })
+            .patch(`/api/reading/${taskId}/state`, { block_id: block.id, mode: modeRef.current })
             .catch(() => undefined);
         }, 700);
     },
@@ -271,7 +296,11 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
 
   const switchMode = (next: ReaderMode) => {
     const sourcePage = version?.origin_pages?.[page - 1];
-    const target = bundle?.versions.find((v) => v.kind === next);
+    const nextReady =
+      next !== "gloss" || bundle?.builds.some((item) => item.kind === "gloss" && item.status === "completed");
+    const target = nextReady
+      ? bundle?.versions.find((v) => v.kind === (next === "gloss" ? "original" : next))
+      : undefined;
     const targetPage = sourcePage == null ? -1 : (target?.origin_pages?.indexOf(sourcePage) ?? -1);
     if (target && targetPage >= 0) {
       positions.current.set(target.id, targetPage + 1);
@@ -518,7 +547,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
             </button>
           </div>
           <span className="reader-version-detail">
-            {version ? `${versionNames[version.kind]} · 第 ${page} / ${version.page_count} 页` : versionNames[mode]}
+            {version ? `${versionNames[mode]} · 第 ${page} / ${version.page_count} 页` : versionNames[mode]}
           </span>
           {currentVersions.length > 1 ? (
             <select aria-label="文件修订" value={version?.id} onChange={(e) => setRevision(e.target.value)}>
@@ -558,7 +587,13 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                 <h2>{versionNames[mode]}尚未生成</h2>
                 <p>
                   {build?.error ||
-                    (isBuilding ? "生成完成后，会自动匹配已保存的批注。" : "生成此版本后，可与其他版本共享批注。")}
+                    (mode === "gloss"
+                      ? isBuilding
+                        ? "正在把全文拆成单词、术语、搭配和句式，并写好释义。"
+                        : "生成后仍是原文。点中哪个词，就显示这块事先准备好的解释。"
+                      : isBuilding
+                        ? "生成完成后，会自动匹配已保存的批注。"
+                        : "生成此版本后，可与其他版本共享批注。")}
                 </p>
                 <Button disabled={isBuilding || mode === "original"} onClick={() => void generate()}>
                   {isBuilding ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
@@ -606,6 +641,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   onPageChange={onPageChange}
                   onSelection={setSelection}
                   onChange={(id, data, deleted, geometry) => reader.change(id, version.id, data, deleted, geometry)}
+                  glossSpans={mode === "gloss" && glossSpans ? glossSpans : undefined}
                 />
               </Suspense>
             ) : (

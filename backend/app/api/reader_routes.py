@@ -81,10 +81,15 @@ def create_reader_router(reading):
         version = service.version(document_id, version_id)
         return {"units": public_units(json.loads(version.index_json))}
 
+    @router.get("/documents/{document_id}/gloss")
+    async def gloss(document_id: str, user: User = Depends(get_current_user)):
+        service.owned(document_id, user.id)
+        return service.gloss_payload(document_id)
+
     @router.post("/documents/{document_id}/versions/{kind}", status_code=202)
     async def generate(
         document_id: str,
-        kind: Literal["chinese", "simple", "bilingual"],
+        kind: Literal["chinese", "simple", "bilingual", "gloss"],
         background: BackgroundTasks,
         user: User = Depends(get_current_user),
     ):

@@ -22,6 +22,8 @@ import wasmUrl from "@embedpdf/pdfium/pdfium.wasm?url";
 import chineseFont from "../../../node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Regular.otf?url";
 import { projectedAnnotations, type SharedAnnotation } from "./reader-store";
 import { readerSelectionGeometry } from "./selection-geometry";
+import GlossLayer from "./GlossLayer";
+import type { GlossSpan } from "./gloss-hit";
 import { textAnchorRects, textRectsBounds, type TextAnchor, type TextPage } from "./text-anchor";
 
 export type ReaderSelection = { text: string; data: PdfAnnotationObject };
@@ -44,6 +46,7 @@ type Props = {
   onPageChange: (page: number) => void;
   onChange: (id: string, data: PdfAnnotationObject, deleted: boolean, geometryChanged: boolean) => void;
   onSelection?: (text: string) => void;
+  glossSpans?: GlossSpan[];
 };
 const geometryKeys = ["rect", "segmentRects", "inkList", "vertices", "linePoints", "rotation", "pageIndex"];
 const appearanceKeys = [
@@ -70,6 +73,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   const [container, setContainer] = useState<HTMLElement | null>(null);
   usePdfFullscreenToolbar(container, Boolean(props.fullscreen), props.chromeVisible !== false, props.onToolbarHeight);
   const registryRef = useRef<PluginRegistry>();
+  const [registry, setRegistry] = useState<PluginRegistry>();
   const loaded = useRef(false);
   const suppress = useRef(false);
   const ids = useRef(new Map<string, string>());
@@ -255,6 +259,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   const onReady = useCallback(
     (registry: PluginRegistry) => {
       registryRef.current = registry;
+      setRegistry(registry);
       const engine = registry.getEngine();
       const getGeometry = engine.getPageGeometry.bind(engine);
       engine.getPageGeometry = (...args) => {
@@ -472,6 +477,9 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
         </div>
       ) : null}
       <EmbedViewer config={config} onInit={setContainer} onReady={onReady} style={{ width: "100%", height: "100%" }} />
+      {props.glossSpans && registry ? (
+        <GlossLayer registry={registry} container={container} spans={props.glossSpans} />
+      ) : null}
     </div>
   );
 });
