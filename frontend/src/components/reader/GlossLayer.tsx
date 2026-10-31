@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DocumentManagerPlugin, ScrollPlugin, type PluginRegistry } from "@embedpdf/react-pdf-viewer";
+import type { Rect } from "@embedpdf/models";
 import { Volume2, VolumeX, X } from "lucide-react";
-import { glossCardPosition, glossClientRect, glyphIndexAt, spanAtChar, type GlossSpan } from "./gloss-hit";
+import api from "@/lib/api";
+import { glossCardPosition, glyphIndexAt, spanAtChar, type GlossSpan } from "./gloss-hit";
 import { textAnchorRects, type TextPage } from "./text-anchor";
 
 type Box = { left: number; top: number; width: number; height: number };
@@ -30,16 +32,24 @@ export default function GlossLayer({
   const [cardBox, setCardBox] = useState({ width: 300, height: 120 });
   const [enriching, setEnriching] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [speechLoading, setSpeechLoading] = useState(false);
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const dismissedPointer = useRef(false);
   const enrichRequest = useRef(0);
+  const speechRequest = useRef(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrls = useRef(new Map<string, string>());
   const cardRef = useRef<HTMLElement>(null);
 
   const closePopup = useCallback(() => {
     window.speechSynthesis?.cancel();
+    speechRequest.current += 1;
+    audioRef.current?.pause();
+    if (audioRef.current) audioRef.current.currentTime = 0;
     enrichRequest.current += 1;
     placeRef.current = null;
     setSpeaking(false);
+    setSpeechLoading(false);
     setEnriching(false);
     setPlace(null);
     setCardPoint(null);
@@ -63,9 +73,7 @@ export default function GlossLayer({
     spansByPageRef.current = byPage;
     const nextSignature = spans.map((span) => span.id).join(",");
     if (spanSignature.current && spanSignature.current !== nextSignature) {
-      /* eslint-disable react-hooks/set-state-in-effect */
       closePopup();
-      /* eslint-enable react-hooks/set-state-in-effect */
     }
     spanSignature.current = nextSignature;
   }, [spans, closePopup]);
@@ -188,33 +196,41 @@ export default function GlossLayer({
       const rects = textAnchorRects(page, span.anchor);
       const scroll = registry.getPlugin<ScrollPlugin>("scroll")?.provides?.();
       const metrics = scroll?.getMetrics();
-      const visible = metrics?.pageVisibilityMetrics.find((item) => item.pageNumber === span.page + 1);
       const viewport = registry.getPlugin("viewport")?.provides?.() as
-        | { getMetrics(): { clientWidth: number; clientHeight: number } }
+        | { getMetrics(): { clientWidth: number; clientHeight: number }; getViewportGap?(): number }
         | undefined;
       const measured = viewport?.getMetrics();
       const port = scrollport(
         container,
         measured ? { width: measured.clientWidth, height: measured.clientHeight } : undefined,
       );
-      if (!visible || !port || !rects.length) {
+      if (!scroll || !metrics || !port || !rects.length) {
         setMarks([]);
         return;
       }
       const origin = port.getBoundingClientRect();
-      const mapped = {
-        viewportX: visible.viewportX,
-        viewportY: visible.viewportY,
-        pageX: visible.original.pageX,
-        pageY: visible.original.pageY,
-        scale: visible.original.scale,
+      const offset = metrics.scrollOffset || { x: 0, y: 0 };
+      const gap = viewport?.getViewportGap?.() || 0;
+      const toClientRect = (rect: Rect) => {
+        try {
+          const positioned = scroll.getRectPositionForPage(span.page, rect);
+          if (!positioned) return null;
+          return {
+            left: origin.left + gap + positioned.origin.x - offset.x,
+            top: origin.top + gap + positioned.origin.y - offset.y,
+            width: positioned.size.width,
+            height: positioned.size.height,
+          };
+        } catch {
+          return null;
+        }
       };
       const current = placeRef.current;
-      if (current) {
-        const spot = glossClientRect({ origin: current.pagePoint, size: { width: 0, height: 0 } }, mapped, origin);
-        setCardPoint({ x: spot.left, y: spot.top });
+      if (current?.span.id === span.id) {
+        const spot = toClientRect({ origin: current.pagePoint, size: { width: 0, height: 0 } });
+        if (spot) setCardPoint({ x: spot.left, y: spot.top });
       }
-      setMarks(rects.map((rect) => glossClientRect(rect, mapped, origin)));
+      setMarks(rects.map(toClientRect).filter((rect): rect is Box => Boolean(rect)));
     };
 
     const refresh = () => {
@@ -226,14 +242,16 @@ export default function GlossLayer({
     const refreshAfterLayout = () => window.requestAnimationFrame(refresh);
 
     const onDocumentPointerDown = (event: PointerEvent) => {
-      if (!placeRef.current) return;
+      if (!placeRef.current) {
+        // A toolbar click can happen between the page pointerdown/pointerup
+        // pair. Clear the one-shot dismissal marker before the next gesture.
+        dismissedPointer.current = false;
+        return;
+      }
       const target = event.target;
       if (target instanceof Node && cardRef.current?.contains(target)) return;
       dismissedPointer.current = true;
       closePopup();
-      window.setTimeout(() => {
-        dismissedPointer.current = false;
-      }, 0);
     };
 
     const scroll = registry.getPlugin<ScrollPlugin>("scroll")?.provides?.();
@@ -270,23 +288,92 @@ export default function GlossLayer({
     };
   }, [registry, container, spans, onEnrich, closePopup]);
 
-  const speak = () => {
-    if (!place || !("speechSynthesis" in window)) return;
-    if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
+  useEffect(
+    () => () => {
+      speechRequest.current += 1;
+      audioRef.current?.pause();
+      audioUrls.current.forEach((url) => URL.revokeObjectURL(url));
+      audioUrls.current.clear();
+    },
+    [],
+  );
+
+  const speakWithBrowser = useCallback((text: string) => {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(place.span.text);
+    const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
-    utterance.rate = 0.86;
+    utterance.rate = 0.92;
+    const voices = window.speechSynthesis.getVoices();
+    // Prefer Edge's cloud/neural voice when the browser exposes it. Local
+    // system voices remain a last-resort fallback when the service is offline.
+    utterance.voice =
+      voices.find((voice) => /^en-US/i.test(voice.lang) && /(online|natural|jenny|aria|guy)/i.test(voice.name)) ||
+      voices.find((voice) => /^en-US/i.test(voice.lang)) ||
+      null;
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = () => setSpeaking(false);
     setSpeaking(true);
     window.speechSynthesis.speak(utterance);
-  };
-  const canSpeak = "speechSynthesis" in window;
+    return true;
+  }, []);
+
+  const speak = useCallback(async () => {
+    if (!place || !place.span.text.trim()) return;
+    if (speaking || speechLoading) {
+      speechRequest.current += 1;
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+      window.speechSynthesis?.cancel();
+      setSpeaking(false);
+      setSpeechLoading(false);
+      return;
+    }
+    const text = place.span.text.trim();
+    const requestId = ++speechRequest.current;
+    const cached = audioUrls.current.get(text);
+    if (cached) {
+      const audio = new Audio(cached);
+      audioRef.current = audio;
+      audio.onended = () => setSpeaking(false);
+      audio.onerror = () => setSpeaking(false);
+      setSpeaking(true);
+      try {
+        await audio.play();
+        if (requestId !== speechRequest.current) audio.pause();
+      } catch {
+        if (requestId !== speechRequest.current) return;
+        setSpeaking(false);
+        speakWithBrowser(text);
+      }
+      return;
+    }
+    setSpeechLoading(true);
+    try {
+      const response = await api.post<Blob>("/api/reader/tts", { text }, { responseType: "blob" });
+      if (requestId !== speechRequest.current) return;
+      const url = URL.createObjectURL(response.data);
+      audioUrls.current.set(text, url);
+      while (audioUrls.current.size > 64) {
+        const oldest = audioUrls.current.keys().next().value as string | undefined;
+        if (!oldest) break;
+        URL.revokeObjectURL(audioUrls.current.get(oldest) || "");
+        audioUrls.current.delete(oldest);
+      }
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => setSpeaking(false);
+      audio.onerror = () => setSpeaking(false);
+      setSpeaking(true);
+      await audio.play();
+      if (requestId !== speechRequest.current) audio.pause();
+    } catch {
+      if (requestId === speechRequest.current) speakWithBrowser(text);
+    } finally {
+      if (requestId === speechRequest.current) setSpeechLoading(false);
+    }
+  }, [place, speakWithBrowser, speaking, speechLoading]);
+  const canSpeak = typeof Audio !== "undefined" || "speechSynthesis" in window;
 
   const point = cardPoint ?? place?.client;
   const card = point
@@ -312,12 +399,12 @@ export default function GlossLayer({
               <button
                 type="button"
                 className="gloss-speak"
-                aria-label={speaking ? "停止朗读" : "朗读英文"}
-                title={speaking ? "停止朗读" : "朗读英文"}
+                aria-label={speaking || speechLoading ? "停止朗读" : "朗读英文"}
+                title={speaking || speechLoading ? "停止朗读" : "朗读英文"}
                 onClick={speak}
                 disabled={!canSpeak || !place.span.text.trim()}
               >
-                {speaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                {speaking || speechLoading ? <VolumeX size={16} /> : <Volume2 size={16} />}
               </button>
               <button
                 type="button"

@@ -18,6 +18,7 @@ from ..models.user import User
 from ..services.job_queue import JobQueue
 from ..services.reader_backup import MAX_ARCHIVE_BYTES, restore_archive
 from ..services.reader_geometry import public_units
+from ..services.reader_tts import MAX_TTS_CHARS, ReaderTTS, ReaderTTSUnavailable
 from ..services.synced_reader import SyncedReader
 from .deps import get_current_user
 
@@ -37,10 +38,15 @@ class AnnotationLink(BaseModel):
     data: dict[str, Any]
 
 
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TTS_CHARS)
+
+
 def create_reader_router(reading):
     router = APIRouter(prefix="/api/reader", tags=["reader-annotations"])
     queue = getattr(reading, "job_queue", None) or JobQueue(reading.config.processing)
     service = SyncedReader(reading)
+    tts = ReaderTTS()
     reading.synced_reader = service
 
     def resume_alignment(bundle, background, opening=False):
@@ -95,6 +101,21 @@ def create_reader_router(reading):
         user: User = Depends(get_current_user),
     ):
         return await service.enrich_gloss_span(document_id, user.id, span_id)
+
+    @router.post("/tts", response_class=Response)
+    async def text_to_speech(body: TTSRequest, user: User = Depends(get_current_user)):
+        del user  # Authentication protects the public Edge TTS relay from anonymous abuse.
+        try:
+            audio = await tts.synthesize(body.text)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except ReaderTTSUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return Response(
+            audio,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
 
     @router.post("/documents/{document_id}/versions/{kind}", status_code=202)
     async def generate(

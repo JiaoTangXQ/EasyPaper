@@ -66,6 +66,8 @@ cryptography==50.0.1
     #   pyjwt
 deepl==1.32.0
     # via pdf2zh
+edge-tts==7.2.3
+    # via -r backend/requirements.txt
 deprecated==1.3.1
     # via limits
 dnspython==2.8.0
@@ -366,6 +368,8 @@ sqlalchemy==2.0.52
     # via
     #   alembic
     #   sqlmodel
+tabulate==0.10.0
+    # via edge-tts
 sqlmodel==0.0.19
     # via -r backend/requirements.txt
 sse-starlette==3.4.11

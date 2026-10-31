@@ -20,4 +20,5 @@ huggingface_hub>=0.34.0,<1.0
 pdf2zh==1.9.11
 slowapi==0.1.9
 mcp==1.28.1
+edge-tts==7.2.3
 tencentcloud-sdk-python-tmt==3.0.1478
