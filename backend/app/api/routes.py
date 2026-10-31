@@ -71,9 +71,11 @@ def create_router(
             def report(status, percent, message):
                 task_manager.update_progress(task_id, status, percent, message)
 
-            def on_batch(done, total):
+            async def on_batch(done, total):
                 percent = 20 + int(75 * done / max(total, 1))
-                report(TaskStatus.REWRITING, min(percent, 95), f"正在准备点读释义（{done}/{total}）")
+                await asyncio.to_thread(
+                    report, TaskStatus.REWRITING, min(percent, 95), f"正在准备点读释义（{done}/{total}）"
+                )
 
             report(TaskStatus.PARSING, 12, "正在索引原文…")
             paper = SimpleNamespace(
