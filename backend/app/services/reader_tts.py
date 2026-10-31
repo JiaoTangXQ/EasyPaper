@@ -6,7 +6,9 @@ import asyncio
 from collections import OrderedDict
 
 MAX_TTS_CHARS = 240
-DEFAULT_TTS_VOICE = "en-US-JennyNeural"
+# Andrew Multilingual is the commonly used Edge Read Aloud voice for clear
+# American English. It avoids the flatter local voices exposed by browsers.
+DEFAULT_TTS_VOICE = "en-US-AndrewMultilingualNeural"
 
 
 class ReaderTTSUnavailable(RuntimeError):
@@ -52,7 +54,7 @@ class ReaderTTS:
                 import edge_tts
 
                 async with self._slots:
-                    speech = edge_tts.Communicate(text, voice=self.voice, rate="-8%")
+                    speech = edge_tts.Communicate(text, voice=self.voice, rate="+0%", pitch="+0Hz")
                     chunks: list[bytes] = []
                     async for chunk in speech.stream():
                         if chunk["type"] == "audio":

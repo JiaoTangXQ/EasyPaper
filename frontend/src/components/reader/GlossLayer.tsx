@@ -306,11 +306,13 @@ export default function GlossLayer({
     utterance.rate = 0.92;
     const voices = window.speechSynthesis.getVoices();
     // Prefer Edge's cloud/neural voice when the browser exposes it. Local
-    // system voices remain a last-resort fallback when the service is offline.
-    utterance.voice =
-      voices.find((voice) => /^en-US/i.test(voice.lang) && /(online|natural|jenny|aria|guy)/i.test(voice.name)) ||
-      voices.find((voice) => /^en-US/i.test(voice.lang)) ||
-      null;
+    // system voices are intentionally excluded because they caused the
+    // distorted, recorder-like sound reported by readers.
+    const voice = voices.find(
+      (candidate) => /^en-US/i.test(candidate.lang) && /(online|natural|jenny|aria|guy|ava|andrew)/i.test(candidate.name),
+    );
+    if (!voice) return false;
+    utterance.voice = voice;
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = () => setSpeaking(false);
     setSpeaking(true);
@@ -344,31 +346,42 @@ export default function GlossLayer({
       } catch {
         if (requestId !== speechRequest.current) return;
         setSpeaking(false);
-        speakWithBrowser(text);
       }
       return;
     }
     setSpeechLoading(true);
+    let response: { data: Blob };
     try {
-      const response = await api.post<Blob>("/api/reader/tts", { text }, { responseType: "blob" });
-      if (requestId !== speechRequest.current) return;
-      const url = URL.createObjectURL(response.data);
-      audioUrls.current.set(text, url);
-      while (audioUrls.current.size > 64) {
-        const oldest = audioUrls.current.keys().next().value as string | undefined;
-        if (!oldest) break;
-        URL.revokeObjectURL(audioUrls.current.get(oldest) || "");
-        audioUrls.current.delete(oldest);
+      response = await api.post<Blob>("/api/reader/tts", { text }, { responseType: "blob" });
+    } catch {
+      if (requestId === speechRequest.current) {
+        setSpeaking(false);
+        setSpeechLoading(false);
+        speakWithBrowser(text);
       }
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => setSpeaking(false);
-      audio.onerror = () => setSpeaking(false);
-      setSpeaking(true);
+      return;
+    }
+    if (requestId !== speechRequest.current) return;
+    const url = URL.createObjectURL(response.data);
+    audioUrls.current.set(text, url);
+    while (audioUrls.current.size > 64) {
+      const oldest = audioUrls.current.keys().next().value as string | undefined;
+      if (!oldest) break;
+      URL.revokeObjectURL(audioUrls.current.get(oldest) || "");
+      audioUrls.current.delete(oldest);
+    }
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => setSpeaking(false);
+    audio.onerror = () => setSpeaking(false);
+    setSpeaking(true);
+    try {
       await audio.play();
       if (requestId !== speechRequest.current) audio.pause();
     } catch {
-      if (requestId === speechRequest.current) speakWithBrowser(text);
+      // A successful neural response must never be replaced by a local,
+      // distorted voice when autoplay policy blocks playback.
+      if (requestId === speechRequest.current) setSpeaking(false);
     } finally {
       if (requestId === speechRequest.current) setSpeechLoading(false);
     }

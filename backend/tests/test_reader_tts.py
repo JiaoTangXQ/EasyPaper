@@ -11,8 +11,8 @@ async def test_reader_tts_streams_audio_and_reuses_the_bounded_cache(monkeypatch
     calls = []
 
     class FakeCommunicate:
-        def __init__(self, text, voice, rate):
-            calls.append((text, voice, rate))
+        def __init__(self, text, voice, rate, pitch):
+            calls.append((text, voice, rate, pitch))
 
         async def stream(self):
             yield {"type": "WordBoundary", "data": b"ignored"}
@@ -24,7 +24,7 @@ async def test_reader_tts_streams_audio_and_reuses_the_bounded_cache(monkeypatch
 
     assert await tts.synthesize("  adequate  ") == b"ID3audio"
     assert await tts.synthesize("adequate") == b"ID3audio"
-    assert calls == [("adequate", "en-US-JennyNeural", "-8%")]
+    assert calls == [("adequate", "en-US-AndrewMultilingualNeural", "+0%", "+0Hz")]
 
 
 @pytest.mark.asyncio
