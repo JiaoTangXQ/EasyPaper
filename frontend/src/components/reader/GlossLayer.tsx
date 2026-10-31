@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { DocumentManagerPlugin, ScrollPlugin, type PluginRegistry } from "@embedpdf/react-pdf-viewer";
+import { Volume2, VolumeX, X } from "lucide-react";
 import { glossCardPosition, glossClientRect, glyphIndexAt, spanAtChar, type GlossSpan } from "./gloss-hit";
 import { textAnchorRects, type TextPage } from "./text-anchor";
 
@@ -11,19 +13,45 @@ export default function GlossLayer({
   registry,
   container,
   spans,
+  onEnrich,
 }: {
   registry: PluginRegistry;
   container: HTMLElement | null;
   spans: GlossSpan[];
+  onEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
 }) {
   const spansByPageRef = useRef(new Map<number, GlossSpan[]>());
+  const spanSignature = useRef("");
   const pages = useRef(new Map<number, Promise<TextPage>>());
   const placeRef = useRef<Place | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
   const [cardPoint, setCardPoint] = useState<Point | null>(null);
   const [marks, setMarks] = useState<Box[]>([]);
   const [cardBox, setCardBox] = useState({ width: 300, height: 120 });
+  const [enriching, setEnriching] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
+  const dismissedPointer = useRef(false);
+  const enrichRequest = useRef(0);
   const cardRef = useRef<HTMLElement>(null);
+
+  const closePopup = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    enrichRequest.current += 1;
+    placeRef.current = null;
+    setSpeaking(false);
+    setEnriching(false);
+    setPlace(null);
+    setCardPoint(null);
+    setMarks([]);
+  }, []);
+
+  useEffect(() => {
+    const updateHost = () => setPortalHost((document.fullscreenElement as HTMLElement | null) || document.body);
+    updateHost();
+    document.addEventListener("fullscreenchange", updateHost);
+    return () => document.removeEventListener("fullscreenchange", updateHost);
+  }, []);
 
   useEffect(() => {
     const byPage = new Map<number, GlossSpan[]>();
@@ -33,26 +61,24 @@ export default function GlossLayer({
       else byPage.set(span.page, [span]);
     });
     spansByPageRef.current = byPage;
-  }, [spans]);
+    const nextSignature = spans.map((span) => span.id).join(",");
+    if (spanSignature.current && spanSignature.current !== nextSignature) {
+      /* eslint-disable react-hooks/set-state-in-effect */
+      closePopup();
+      /* eslint-enable react-hooks/set-state-in-effect */
+    }
+    spanSignature.current = nextSignature;
+  }, [spans, closePopup]);
   useEffect(() => {
     placeRef.current = place;
   }, [place]);
-
-  /* The transient popup must close when a new prepared span set arrives. */
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    setPlace(null);
-    setCardPoint(null);
-    setMarks([]);
-  }, [spans]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
     const box = card.getBoundingClientRect();
     if (box.width && box.height) setCardBox({ width: box.width, height: box.height });
-  }, [place]);
+  }, [place, portalHost]);
 
   useEffect(() => {
     const documents = registry.getPlugin<DocumentManagerPlugin>("document-manager")?.provides?.();
@@ -87,6 +113,11 @@ export default function GlossLayer({
                 down = point;
               },
               onPointerUp(point, event) {
+                if (dismissedPointer.current) {
+                  dismissedPointer.current = false;
+                  down = null;
+                  return;
+                }
                 if (!down || Math.hypot(point.x - down.x, point.y - down.y) > 4) {
                   down = null;
                   return;
@@ -117,15 +148,28 @@ export default function GlossLayer({
               glyph,
             );
       if (!span) {
-        setPlace(null);
-        setCardPoint(null);
-        setMarks([]);
+        closePopup();
         return;
       }
       const next = { span, pagePoint: point, client };
       placeRef.current = next;
       setPlace(next);
       setCardPoint(client);
+      const requestId = ++enrichRequest.current;
+      if (onEnrich && (!span.simple_en || !span.ipa)) {
+        setEnriching(true);
+        void onEnrich(span)
+          .then((enriched) => {
+            if (requestId === enrichRequest.current && enriched && placeRef.current?.span.id === enriched.id) {
+              const updated = { ...placeRef.current, span: enriched };
+              placeRef.current = updated;
+              setPlace(updated);
+            }
+          })
+          .finally(() => {
+            if (requestId === enrichRequest.current) setEnriching(false);
+          });
+      }
       await paint(pdf, span);
     };
 
@@ -179,6 +223,18 @@ export default function GlossLayer({
       const pdf = documentId ? documents.getDocumentState(documentId)?.document : undefined;
       if (current && pdf) void paint(pdf, current.span);
     };
+    const refreshAfterLayout = () => window.requestAnimationFrame(refresh);
+
+    const onDocumentPointerDown = (event: PointerEvent) => {
+      if (!placeRef.current) return;
+      const target = event.target;
+      if (target instanceof Node && cardRef.current?.contains(target)) return;
+      dismissedPointer.current = true;
+      closePopup();
+      window.setTimeout(() => {
+        dismissedPointer.current = false;
+      }, 0);
+    };
 
     const scroll = registry.getPlugin<ScrollPlugin>("scroll")?.provides?.();
     if (!scroll) return;
@@ -194,26 +250,50 @@ export default function GlossLayer({
       /* Zoom events are optional; scrolling still repositions the highlight. */
     }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setPlace(null);
-        setCardPoint(null);
-        setMarks([]);
+      if (event.key === "Escape" && placeRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        closePopup();
       }
     };
-    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDocumentPointerDown, true);
+    window.addEventListener("resize", refreshAfterLayout);
+    document.addEventListener("fullscreenchange", refreshAfterLayout);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       stops.forEach((stop) => stop());
       remove.forEach((fn) => fn());
-      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+      window.removeEventListener("resize", refreshAfterLayout);
+      document.removeEventListener("fullscreenchange", refreshAfterLayout);
+      window.removeEventListener("keydown", onKey, true);
     };
-  }, [registry, container, spans]);
+  }, [registry, container, spans, onEnrich, closePopup]);
+
+  const speak = () => {
+    if (!place || !("speechSynthesis" in window)) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(place.span.text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.86;
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    setSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
+  const canSpeak = "speechSynthesis" in window;
 
   const point = cardPoint ?? place?.client;
   const card = point
     ? glossCardPosition(point, cardBox, { width: window.innerWidth, height: window.innerHeight })
     : null;
 
-  return (
+  const content = (
     <>
       {marks.map((mark, index) => (
         <span key={index} className="gloss-mark" style={mark} />
@@ -226,14 +306,44 @@ export default function GlossLayer({
           aria-label={place.span.label}
           style={{ left: card.left, top: card.top }}
         >
-          <p className="gloss-kicker">{place.span.label}</p>
+          <div className="gloss-headline">
+            <p className="gloss-kicker">{place.span.label}</p>
+            <div className="gloss-actions">
+              <button
+                type="button"
+                className="gloss-speak"
+                aria-label={speaking ? "停止朗读" : "朗读英文"}
+                title={speaking ? "停止朗读" : "朗读英文"}
+                onClick={speak}
+                disabled={!canSpeak || !place.span.text.trim()}
+              >
+                {speaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              </button>
+              <button
+                type="button"
+                className="gloss-close"
+                aria-label="关闭点读解释"
+                title="关闭"
+                onClick={closePopup}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
           <p className="gloss-source">{place.span.text}</p>
+          {place.span.ipa ? <p className="gloss-ipa">/{place.span.ipa.replace(/^\/+|\/+$/g, "")}/</p> : null}
           <p className="gloss-zh">{place.span.zh}</p>
-          <p className="gloss-note">{place.span.category === "word" ? place.span.en : place.span.role}</p>
+          {place.span.simple_en || place.span.en ? (
+            <p className="gloss-simple-en">{place.span.simple_en || place.span.en}</p>
+          ) : enriching ? (
+            <p className="gloss-simple-en gloss-loading">正在准备简明英文解释…</p>
+          ) : null}
+          {place.span.role ? <p className="gloss-note">{place.span.role}</p> : null}
         </aside>
       ) : null}
     </>
   );
+  return portalHost ? createPortal(content, portalHost) : null;
 }
 
 function scrollport(root: HTMLElement | null, size?: { width: number; height: number }): HTMLElement | null {

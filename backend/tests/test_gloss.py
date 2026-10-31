@@ -38,6 +38,7 @@ def test_tiles_a_sentence_into_a_pattern_and_keeps_the_original_words():
     assert "en" not in spans[0]
     assert spans[2]["label"] == "单词"
     assert spans[2]["en"] == "performs better than"
+    assert spans[2]["simple_en"] == "performs better than"
     assert "role" not in spans[2]
 
 
@@ -58,6 +59,7 @@ def test_rejects_a_gap_and_keeps_a_multiword_word_span_as_a_term():
 def test_missing_gloss_fields_still_cover_the_sentence():
     word = tile_sentence("Energy.", [{"text": "Energy.", "category": "word", "zh": "能量"}])
     assert word[0]["en"] == "见中文释义"
+    assert word[0]["simple_en"] == "See the Chinese meaning."
     phrase = tile_sentence("at all.", [{"text": "at all.", "category": "collocation", "zh": "完全"}])
     assert phrase[0]["role"] == "这几个词作为一个整体"
     unknown = tile_sentence("Energy.", [{"text": "Energy.", "category": "noun", "zh": "能量", "role": "被讨论的对象"}])

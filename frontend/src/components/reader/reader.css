@@ -748,14 +748,79 @@
   color: var(--muted);
   font-size: 12px;
 }
+.gloss-headline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gloss-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.gloss-speak {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--accent);
+  background: #fff;
+  cursor: pointer;
+}
+.gloss-speak:hover {
+  background: var(--line);
+}
+.gloss-speak:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.gloss-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.gloss-close:hover {
+  color: var(--ink);
+  background: var(--line);
+}
 .gloss-card .gloss-source {
   margin: 4px 0 0;
   font-weight: 650;
   line-height: 1.45;
 }
+.gloss-card .gloss-ipa {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-family: "Times New Roman", serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
 .gloss-card .gloss-zh {
   margin: 6px 0 0;
   line-height: 1.5;
+}
+.gloss-card .gloss-simple-en {
+  margin: 5px 0 0;
+  color: #315d8f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.gloss-card .gloss-loading {
+  color: var(--muted);
+  font-style: italic;
 }
 .gloss-card .gloss-note {
   margin: 4px 0 0;

@@ -47,6 +47,7 @@ type Props = {
   onChange: (id: string, data: PdfAnnotationObject, deleted: boolean, geometryChanged: boolean) => void;
   onSelection?: (text: string) => void;
   glossSpans?: GlossSpan[];
+  onGlossEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
 };
 const geometryKeys = ["rect", "segmentRects", "inkList", "vertices", "linePoints", "rotation", "pageIndex"];
 const appearanceKeys = [
@@ -499,7 +500,12 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       ) : null}
       <EmbedViewer config={config} onInit={setContainer} onReady={onReady} style={{ width: "100%", height: "100%" }} />
       {props.glossSpans && registry ? (
-        <GlossLayer registry={registry} container={container} spans={props.glossSpans} />
+        <GlossLayer
+          registry={registry}
+          container={container}
+          spans={props.glossSpans}
+          onEnrich={props.onGlossEnrich}
+        />
       ) : null}
     </div>
   );

@@ -9,6 +9,8 @@ export type GlossSpan = {
   label: string;
   zh: string;
   en?: string;
+  simple_en?: string;
+  ipa?: string;
   role?: string;
   anchor: TextAnchor;
 };

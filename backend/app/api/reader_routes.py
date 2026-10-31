@@ -88,6 +88,14 @@ def create_reader_router(reading):
         service.owned(document_id, user.id)
         return service.gloss_payload(document_id)
 
+    @router.post("/documents/{document_id}/gloss/{span_id}/enrich")
+    async def enrich_gloss(
+        document_id: str,
+        span_id: str,
+        user: User = Depends(get_current_user),
+    ):
+        return await service.enrich_gloss_span(document_id, user.id, span_id)
+
     @router.post("/documents/{document_id}/versions/{kind}", status_code=202)
     async def generate(
         document_id: str,

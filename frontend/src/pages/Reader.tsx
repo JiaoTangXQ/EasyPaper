@@ -340,6 +340,24 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
       setGenerating(false);
     }
   };
+
+  const enrichGlossSpan = useCallback(
+    async (span: GlossSpan) => {
+      if (!bundle?.document_id || span.simple_en || span.ipa) return span;
+      try {
+        const { data } = await api.post<GlossSpan>(
+          `/api/reader/documents/${bundle.document_id}/gloss/${span.id}/enrich`,
+        );
+        setGlossSpans((current) =>
+          current?.map((item) => (item.id === data.id ? { ...item, ...data } : item)) || current,
+        );
+        return data;
+      } catch {
+        return null;
+      }
+    },
+    [bundle?.document_id],
+  );
   const download = async (path: string, name: string) => {
     try {
       const { data } = await api.get(path, { responseType: "blob" });
@@ -471,7 +489,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
             {modes.map((item) => (
               <button key={item} aria-pressed={mode === item} onClick={() => switchMode(item)}>
                 {versionNames[item]}
-                {!bundle.versions.some((v) => v.kind === item) ? (
+                {!((item === "gloss" && glossReady) || bundle.versions.some((v) => v.kind === item)) ? (
                   <span className="version-unready">
                     {bundle.builds.some((b) => b.kind === item && b.status === "running") ? "生成中" : "待生成"}
                   </span>
@@ -643,6 +661,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   onSelection={setSelection}
                   onChange={(id, data, deleted, geometry) => reader.change(id, version.id, data, deleted, geometry)}
                   glossSpans={mode === "gloss" && glossSpans ? glossSpans : undefined}
+                  onGlossEnrich={enrichGlossSpan}
                 />
               </Suspense>
             ) : (

@@ -16,7 +16,14 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.api.deps import get_current_user
 from app.api.reader_routes import create_reader_router
 from app.core.config import LLMConfig
-from app.models.reading import ReaderAnnotation, ReaderDocument, ReaderOperation, ReaderVersion
+from app.models.reading import (
+    ReaderAnnotation,
+    ReaderBuild,
+    ReaderDocument,
+    ReaderGloss,
+    ReaderOperation,
+    ReaderVersion,
+)
 from app.models.task import Task, TaskStatus
 from app.models.user import User
 from app.services.reader_geometry import char_rects, copied_projection, locate_quote, pdf_index, text_anchor, union
@@ -125,6 +132,49 @@ def annotation_body(reader, kind="chinese", operation="create", base=0):
             "opacity": 0.5,
         },
     }
+
+
+def test_legacy_gloss_span_is_enriched_on_first_click_and_cached(reader):
+    document_id = reader.bundle["document_id"]
+    with Session(reader.engine) as session:
+        session.add(ReaderBuild(id=f"{document_id}:gloss", document_id=document_id, kind="gloss", status="completed"))
+        session.add(
+            ReaderGloss(
+                document_id=document_id,
+                spans_json=json.dumps(
+                    [
+                        {
+                            "id": "span-1",
+                            "text": "method",
+                            "category": "word",
+                            "label": "单词",
+                            "zh": "方法",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        session.commit()
+
+    calls = []
+
+    async def enrich(prompt, context):
+        calls.append((prompt, json.loads(context)))
+        return {"ipa": "ˈmɛθəd", "simple_en": "A way to do something."}
+
+    reader.reading.ask_model = enrich
+    prefix = f"/api/reader/documents/{document_id}/gloss/span-1/enrich"
+    response = reader.client.post(prefix)
+    assert response.status_code == 200, response.text
+    assert response.json()["ipa"] == "ˈmɛθəd"
+    assert response.json()["en"] == "A way to do something."
+    assert response.json()["simple_en"] == "A way to do something."
+    assert calls[0][1]["text"] == "method"
+
+    cached = reader.client.post(prefix)
+    assert cached.status_code == 200
+    assert len(calls) == 1
 
 
 def url(reader, annotation_id="annotation1"):
