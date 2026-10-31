@@ -16,7 +16,7 @@ export default function GlossLayer({
   container: HTMLElement | null;
   spans: GlossSpan[];
 }) {
-  const spansRef = useRef(spans);
+  const spansByPageRef = useRef(new Map<number, GlossSpan[]>());
   const pages = useRef(new Map<number, Promise<TextPage>>());
   const placeRef = useRef<Place | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
@@ -26,7 +26,13 @@ export default function GlossLayer({
   const cardRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    spansRef.current = spans;
+    const byPage = new Map<number, GlossSpan[]>();
+    spans.forEach((span) => {
+      const page = byPage.get(span.page);
+      if (page) page.push(span);
+      else byPage.set(span.page, [span]);
+    });
+    spansByPageRef.current = byPage;
   }, [spans]);
   useEffect(() => {
     placeRef.current = place;
@@ -107,7 +113,7 @@ export default function GlossLayer({
           ? null
           : spanAtChar(
               page,
-              spansRef.current.filter((item) => item.page === pageIndex),
+              spansByPageRef.current.get(pageIndex) ?? [],
               glyph,
             );
       if (!span) {

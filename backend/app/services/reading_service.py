@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -45,6 +45,11 @@ class ReadingService:
         self._locks = defaultdict(asyncio.Lock)
         self._semaphore = asyncio.Semaphore(config.processing.max_concurrent)
         self.ai = ai_client or AIClient(config.llm)
+        # ReadingDocument is immutable after the first parse. Keep a small
+        # bounded cache because workspace/polling and reader routes repeatedly
+        # request the same JSON document while the user turns pages.
+        self._document_cache: OrderedDict[str, dict] = OrderedDict()
+        self._document_cache_limit = 8
 
     def cached_title_translations(self, tasks: list[Task], titles: list[str | None]) -> dict[str, str]:
         if not tasks:
@@ -93,10 +98,16 @@ class ReadingService:
 
     async def document(self, task: Task) -> dict:
         async with self._locks[f"document:{task.task_id}"]:
+            cached = self._document_cache.get(task.task_id)
+            if cached is not None:
+                self._document_cache.move_to_end(task.task_id)
+                return cached
             with Session(self.engine) as session:
                 stored = session.get(ReadingDocument, task.task_id)
                 if stored:
-                    return json.loads(stored.document_json)
+                    document = json.loads(stored.document_json)
+                    self._remember_document(task.task_id, document)
+                    return document
             if not task.original_pdf_path or not Path(task.original_pdf_path).is_file():
                 raise FileNotFoundError("论文原件不存在。请重新导入，已有笔记仍保留在知识库。")
             document = await asyncio.to_thread(parse_document, Path(task.original_pdf_path).read_bytes(), task.filename)
@@ -107,7 +118,14 @@ class ReadingService:
                     ReadingDocument(task_id=task.task_id, document_json=json.dumps(document, ensure_ascii=False))
                 )
                 session.commit()
+            self._remember_document(task.task_id, document)
             return document
+
+    def _remember_document(self, task_id: str, document: dict) -> None:
+        self._document_cache[task_id] = document
+        self._document_cache.move_to_end(task_id)
+        while len(self._document_cache) > self._document_cache_limit:
+            self._document_cache.popitem(last=False)
 
     def ensure_paper(self, task: Task, title: str) -> PaperKnowledge:
         with Session(self.engine) as session:

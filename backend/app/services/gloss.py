@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 
@@ -85,9 +86,9 @@ async def prepare_gloss(
             produced = await _finish_batch(ai, batch, units, skip, page_units_by_page)
             ready.extend(produced)
             if produced and on_batch:
-                on_batch(produced)
+                await _notify(on_batch, produced)
             if on_progress:
-                on_progress(index, total)
+                await _notify(on_progress, index, total)
         return ready
 
     slots = asyncio.Semaphore(concurrency)
@@ -103,11 +104,11 @@ async def prepare_gloss(
                 return exc
         async with lock:
             if produced and on_batch:
-                on_batch(produced)
+                await _notify(on_batch, produced)
             nonlocal_finished = finished + 1
             finished = nonlocal_finished
             if on_progress:
-                on_progress(finished, total)
+                await _notify(on_progress, finished, total)
         return produced
 
     outcomes = await asyncio.gather(*(run(batch) for batch in batches))
@@ -116,6 +117,13 @@ async def prepare_gloss(
     if failed:
         raise failed
     return ready
+
+
+async def _notify(callback, *args):
+    """Run sync callbacks inline and let persistence callbacks yield to the loop."""
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        await result
 
 
 async def _finish_batch(ai, batch, units, skip, page_units_by_page) -> list[dict]:
@@ -302,13 +310,22 @@ def _present(
 def _anchor(unit: dict, begin: int, end: int, page_units_by_page: dict) -> dict:
     before = normalized(unit["text"][:begin])
     after = normalized(unit["text"][end:])
-    page_units = page_units_by_page.get(unit.get("page"))
-    if page_units is None:
-        page_units = [unit]
-    position = next((index for index, item in enumerate(page_units) if item.get("id") == unit["id"]), None)
-    if position is not None:
-        before = "".join(normalized(item["text"]) for item in page_units[:position]) + before
-        after += "".join(normalized(item["text"]) for item in page_units[position + 1 :])
+    page_context = page_units_by_page.get(unit.get("page"))
+    if isinstance(page_context, dict):
+        # _group_page_units precomputes the page-wide context once. This keeps
+        # anchor creation linear in the number of spans instead of rescanning
+        # every preceding/following sentence for each span.
+        context = page_context.get(unit.get("id"))
+        if context is not None:
+            before = context[0] + before
+            after += context[1]
+    elif page_context is not None:
+        # Accept the old list shape for callers that construct the map
+        # themselves (and for compatibility with persisted/legacy tooling).
+        position = next((index for index, item in enumerate(page_context) if item.get("id") == unit["id"]), None)
+        if position is not None:
+            before = "".join(normalized(item["text"]) for item in page_context[:position]) + before
+            after += "".join(normalized(item["text"]) for item in page_context[position + 1 :])
     return {
         "text": unit["text"][begin:end].strip(),
         "prefix": before[-48:],
@@ -321,4 +338,21 @@ def _group_page_units(units: list[dict]) -> dict:
     grouped = {}
     for unit in units:
         grouped.setdefault(unit.get("page"), []).append(unit)
-    return grouped
+    contexts = {}
+    for page, page_units in grouped.items():
+        before = ""
+        prefixes = {}
+        for unit in page_units:
+            unit_id = unit.get("id")
+            if unit_id:
+                prefixes[unit_id] = before
+            before += normalized(unit.get("text") or "")
+        after = ""
+        suffixes = {}
+        for unit in reversed(page_units):
+            unit_id = unit.get("id")
+            if unit_id:
+                suffixes[unit_id] = after
+            after = normalized(unit.get("text") or "") + after
+        contexts[page] = {unit_id: (prefixes[unit_id], suffixes[unit_id]) for unit_id in prefixes}
+    return contexts

@@ -98,6 +98,29 @@ def test_anchor_distinguishes_a_repeated_word():
     assert spans[3]["page"] == 0
 
 
+def test_anchor_keeps_context_from_other_units_on_the_same_page():
+    first = {"id": "s1", "page": 0, "text": "The first sentence."}
+    second = {"id": "s2", "page": 0, "text": "The second sentence."}
+    spans = tile_sentence(
+        second["text"],
+        [{"text": second["text"], "category": "pattern", "zh": "第二句", "role": "整句"}],
+        unit=second,
+        units=[first, second],
+    )
+    assert spans[0]["anchor"]["prefix"].endswith("thefirstsentence.")
+
+
+@pytest.mark.asyncio
+async def test_prepare_gloss_awaits_async_checkpoint_callbacks():
+    seen = []
+
+    async def checkpoint(produced):
+        seen.extend(produced)
+
+    spans = await prepare_gloss(_AI(["echo"]), [{"id": "s1", "page": 0, "text": "Energy is stored."}], on_batch=checkpoint)
+    assert seen == spans
+
+
 class _AI:
     def __init__(self, answers):
         self.answers = list(answers)
