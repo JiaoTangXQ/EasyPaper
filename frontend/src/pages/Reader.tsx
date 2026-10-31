@@ -343,7 +343,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
 
   const enrichGlossSpan = useCallback(
     async (span: GlossSpan) => {
-      if (!bundle?.document_id || span.simple_en || span.ipa) return span;
+      if (!bundle?.document_id || span.simple_en) return span;
       try {
         const { data } = await api.post<GlossSpan>(
           `/api/reader/documents/${bundle.document_id}/gloss/${span.id}/enrich`,

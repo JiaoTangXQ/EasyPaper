@@ -39,6 +39,7 @@ export default function GlossLayer({
   const speechRequest = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrls = useRef(new Map<string, string>());
+  const audioFetches = useRef(new Map<string, Promise<string>>());
   const cardRef = useRef<HTMLElement>(null);
 
   const closePopup = useCallback(() => {
@@ -164,7 +165,7 @@ export default function GlossLayer({
       setPlace(next);
       setCardPoint(client);
       const requestId = ++enrichRequest.current;
-      if (onEnrich && (!span.simple_en || !span.ipa)) {
+      if (onEnrich && !span.simple_en) {
         setEnriching(true);
         void onEnrich(span)
           .then((enriched) => {
@@ -294,9 +295,49 @@ export default function GlossLayer({
       audioRef.current?.pause();
       audioUrls.current.forEach((url) => URL.revokeObjectURL(url));
       audioUrls.current.clear();
+      audioFetches.current.clear();
     },
     [],
   );
+
+  const cacheAudio = useCallback((text: string, blob: Blob) => {
+    const existing = audioUrls.current.get(text);
+    if (existing) return existing;
+    const url = URL.createObjectURL(blob);
+    audioUrls.current.set(text, url);
+    while (audioUrls.current.size > 64) {
+      const oldest = audioUrls.current.keys().next().value as string | undefined;
+      if (!oldest) break;
+      URL.revokeObjectURL(audioUrls.current.get(oldest) || "");
+      audioUrls.current.delete(oldest);
+    }
+    return url;
+  }, []);
+
+  const fetchAudio = useCallback(
+    (text: string) => {
+      const cached = audioUrls.current.get(text);
+      if (cached) return Promise.resolve(cached);
+      const pending = audioFetches.current.get(text);
+      if (pending) return pending;
+      const request = api
+        .post<Blob>("/api/reader/tts", { text }, { responseType: "blob" })
+        .then((response) => cacheAudio(text, response.data))
+        .finally(() => audioFetches.current.delete(text));
+      audioFetches.current.set(text, request);
+      return request;
+    },
+    [cacheAudio],
+  );
+
+  // Fetch while the card is opening. If the speaker is clicked after this
+  // finishes, audio.play() starts directly inside the user gesture instead of
+  // waiting for a network response and losing browser activation.
+  useEffect(() => {
+    const text = place?.span.text.trim();
+    if (!text) return;
+    void fetchAudio(text).catch(() => undefined);
+  }, [place?.span.text, fetchAudio]);
 
   const speakWithBrowser = useCallback((text: string) => {
     if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
@@ -350,9 +391,24 @@ export default function GlossLayer({
       return;
     }
     setSpeechLoading(true);
-    let response: { data: Blob };
     try {
-      response = await api.post<Blob>("/api/reader/tts", { text }, { responseType: "blob" });
+      const url = await fetchAudio(text);
+      if (requestId !== speechRequest.current) return;
+      const audio = new Audio(url);
+      audio.preload = "auto";
+      audioRef.current = audio;
+      audio.onended = () => setSpeaking(false);
+      audio.onerror = () => setSpeaking(false);
+      setSpeaking(true);
+      try {
+        await audio.play();
+        if (requestId !== speechRequest.current) audio.pause();
+      } catch {
+        // A successful neural response must never be replaced by a local,
+        // distorted voice when autoplay policy blocks playback. The audio is
+        // cached, so the next speaker click can start it synchronously.
+        if (requestId === speechRequest.current) setSpeaking(false);
+      }
     } catch {
       if (requestId === speechRequest.current) {
         setSpeaking(false);
@@ -360,32 +416,10 @@ export default function GlossLayer({
         speakWithBrowser(text);
       }
       return;
-    }
-    if (requestId !== speechRequest.current) return;
-    const url = URL.createObjectURL(response.data);
-    audioUrls.current.set(text, url);
-    while (audioUrls.current.size > 64) {
-      const oldest = audioUrls.current.keys().next().value as string | undefined;
-      if (!oldest) break;
-      URL.revokeObjectURL(audioUrls.current.get(oldest) || "");
-      audioUrls.current.delete(oldest);
-    }
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.onended = () => setSpeaking(false);
-    audio.onerror = () => setSpeaking(false);
-    setSpeaking(true);
-    try {
-      await audio.play();
-      if (requestId !== speechRequest.current) audio.pause();
-    } catch {
-      // A successful neural response must never be replaced by a local,
-      // distorted voice when autoplay policy blocks playback.
-      if (requestId === speechRequest.current) setSpeaking(false);
     } finally {
       if (requestId === speechRequest.current) setSpeechLoading(false);
     }
-  }, [place, speakWithBrowser, speaking, speechLoading]);
+  }, [fetchAudio, place, speakWithBrowser, speaking, speechLoading]);
   const canSpeak = typeof Audio !== "undefined" || "speechSynthesis" in window;
 
   const point = cardPoint ?? place?.client;

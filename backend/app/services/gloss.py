@@ -34,12 +34,21 @@ GLOSS_SYSTEM = (
     "你在为英文学术论文做点读准备。每个句子都要切成前后相接、互不重叠的块，并铺满整句。"
     "读者点到块里的任意一个词，都会看到这一整块的解释，所以固定搭配、俚语、术语、句式和缩写必须整块切出。\n"
     "类别只能是 word、term、collocation、idiom、discourse、pattern、abbreviation。\n"
-    "每个块都给出 simple_en，用 CEFR B1-B2 常用词写一句短而清楚的英文解释；不要用生僻词解释生僻词。\n"
+    "每个块都必须给出 simple_en，用 CEFR B1-B2 常用词写一句短而清楚的英文解释；绝不能省略这个字段，也不要用生僻词解释生僻词。\n"
     "word 是单独一个单词，给出 zh（中文意思）、ipa（IPA 音标）和 en（与 simple_en 相同，保留旧字段兼容）。\n"
     "其余类别给出 zh（中文意思）、ipa（能判断时给短语音标）和 role（它在这句里起什么作用）。\n"
     "标点附在相邻块上。text 必须按顺序抄自原句，合起来覆盖每一个词。\n"
     '只返回 JSON：{"sentences":[{"id":"原句 id","spans":[{"text":"...","category":"word","zh":"...","ipa":"...","en":"...","simple_en":"...","role":"..."}]}]}'
 )
+
+_SIMPLE_EN_FALLBACKS = {
+    "term": "This term names an idea or thing in the text.",
+    "collocation": "These words are often used together.",
+    "idiom": "This expression has a meaning beyond the individual words.",
+    "discourse": "This phrase connects this idea to the next one.",
+    "pattern": "This sentence pattern shows the idea in the sentence.",
+    "abbreviation": "This short form stands for a longer term.",
+}
 
 
 class GlossCoverageError(ValueError):
@@ -299,6 +308,13 @@ def _present(
         simple_en = raw.get("simple_en") or raw.get("en")
         if isinstance(simple_en, str) and simple_en.strip():
             extra["simple_en"] = simple_en.strip()
+        else:
+            # Keep newly generated bundles complete if a provider omits the
+            # required field. This avoids a click-time enrichment request.
+            extra["simple_en"] = _SIMPLE_EN_FALLBACKS.get(
+                category,
+                "This group of words works together as one meaning.",
+            )
     ipa = raw.get("ipa")
     if isinstance(ipa, str) and ipa.strip():
         extra["ipa"] = ipa.strip().strip("/")

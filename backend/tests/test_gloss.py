@@ -62,6 +62,7 @@ def test_missing_gloss_fields_still_cover_the_sentence():
     assert word[0]["simple_en"] == "See the Chinese meaning."
     phrase = tile_sentence("at all.", [{"text": "at all.", "category": "collocation", "zh": "完全"}])
     assert phrase[0]["role"] == "这几个词作为一个整体"
+    assert phrase[0]["simple_en"] == "These words are often used together."
     unknown = tile_sentence("Energy.", [{"text": "Energy.", "category": "noun", "zh": "能量", "role": "被讨论的对象"}])
     assert unknown[0]["category"] == "term"
 
