@@ -34,6 +34,7 @@ import {
 } from "@/components/reader/reader-store";
 import { useSyncedReader } from "@/components/reader/useSyncedReader";
 import { useFullscreenChrome } from "@/components/reader/useFullscreenChrome";
+import { useUserPreferences } from "@/lib/preferences";
 import "@/components/reader/reader.css";
 
 const PdfViewer = lazy(() => import("@/components/reader/PdfViewer"));
@@ -58,6 +59,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const [searchParams] = useSearchParams();
   const reader = useSyncedReader(taskId);
   const { bundle } = reader;
+  const { preferences } = useUserPreferences();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [mode, setMode] = useState<ReaderMode>("original");
   const [revision, setRevision] = useState("");
@@ -662,6 +664,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
                   onChange={(id, data, deleted, geometry) => reader.change(id, version.id, data, deleted, geometry)}
                   glossSpans={mode === "gloss" && glossSpans ? glossSpans : undefined}
                   onGlossEnrich={enrichGlossSpan}
+                  autoSpeak={preferences.reading.gloss.auto_speak}
                 />
               </Suspense>
             ) : (

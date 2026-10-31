@@ -34,6 +34,14 @@ def server(engine, account):
     async def upload(request: Request):
         return {"size": len(await request.body())}
 
+    @app.post("/api/settings/preferences")
+    async def preferences():
+        return {"ok": True}
+
+    @app.post("/api/reader/tts")
+    async def tts():
+        return {"ok": True}
+
     return TestClient(app), {"Authorization": "Bearer " + create_access_token(account.id)}, config
 
 
@@ -170,6 +178,15 @@ def test_daily_quota_persists_across_requests_and_keeps_reads_available(server):
     assert client.post("/api/protected", headers=headers).status_code == 200
     assert client.post("/api/protected", headers=headers).status_code == 429
     assert client.get("/api/protected", headers=headers).status_code == 200
+
+
+def test_preferences_and_reader_tts_do_not_consume_daily_operation_quota(server, session):
+    from sqlmodel import select
+
+    client, headers, _ = server
+    assert client.post("/api/settings/preferences", headers=headers).status_code == 200
+    assert client.post("/api/reader/tts", headers=headers).status_code == 200
+    assert not session.exec(select(DailyUsage)).all()
 
 
 def test_daily_quota_is_per_account_and_persistent(engine, account):

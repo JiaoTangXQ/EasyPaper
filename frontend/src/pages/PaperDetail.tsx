@@ -268,7 +268,7 @@ const PaperDetail = () => {
               )}
               <DropdownMenuItem onSelect={() => void handleExport()}>知识备份 · JSON</DropdownMenuItem>
               {features.local_sync && (
-                <DropdownMenuItem onSelect={() => navigate("/settings")}>配置 Obsidian 连接</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate("/settings")}>打开设置</DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

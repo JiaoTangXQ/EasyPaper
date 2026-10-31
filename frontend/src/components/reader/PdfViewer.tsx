@@ -48,6 +48,7 @@ type Props = {
   onSelection?: (text: string) => void;
   glossSpans?: GlossSpan[];
   onGlossEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
+  autoSpeak?: boolean;
 };
 const geometryKeys = ["rect", "segmentRects", "inkList", "vertices", "linePoints", "rotation", "pageIndex"];
 const appearanceKeys = [
@@ -505,6 +506,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
           container={container}
           spans={props.glossSpans}
           onEnrich={props.onGlossEnrich}
+          autoSpeak={props.autoSpeak}
         />
       ) : null}
     </div>

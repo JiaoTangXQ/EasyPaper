@@ -16,6 +16,7 @@ from sqlmodel import Session
 from .api.agent_deps import MCPAuthMiddleware
 from .api.agent_routes import create_agent_router
 from .api.auth import router as auth_router
+from .api.settings_routes import router as settings_router
 from .api.knowledge_routes import create_knowledge_router
 from .api.reader_routes import create_reader_router
 from .api.reading_routes import create_reading_router
@@ -102,6 +103,7 @@ if not config.agent.enabled:
     app.add_middleware(ServerGuard, config=config, engine=engine)
 
 app.include_router(auth_router, prefix="/api/auth")
+app.include_router(settings_router)
 app.include_router(
     create_agent_router(
         draft_service=draft_service,

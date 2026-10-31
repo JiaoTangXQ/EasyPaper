@@ -74,7 +74,12 @@ class ServerGuard:
                 raise HTTPException(503, "AI 服务尚未配置，请联系管理员；已有论文仍可阅读。")
             # Read/save-state/delete stay usable after the expensive-operation
             # allowance is exhausted. Failed admitted attempts still cost a unit.
-            if method in {"POST", "PUT"} and not path.endswith("/cancel"):
+            # Preferences and short TTS reads are authenticated state/read
+            # operations. They must remain available even when the daily AI
+            # operation allowance is exhausted; automatic point-reading can
+            # legitimately request one audio clip per click.
+            billable = not path.startswith("/api/settings/") and path != "/api/reader/tts"
+            if method in {"POST", "PUT"} and not path.endswith("/cancel") and billable:
                 is_import = path in {"/api/upload", "/api/upload-url"}
                 charge_usage(
                     session,

@@ -16,11 +16,13 @@ export default function GlossLayer({
   container,
   spans,
   onEnrich,
+  autoSpeak = false,
 }: {
   registry: PluginRegistry;
   container: HTMLElement | null;
   spans: GlossSpan[];
   onEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
+  autoSpeak?: boolean;
 }) {
   const spansByPageRef = useRef(new Map<number, GlossSpan[]>());
   const spanSignature = useRef("");
@@ -41,6 +43,9 @@ export default function GlossLayer({
   const audioUrls = useRef(new Map<string, string>());
   const audioFetches = useRef(new Map<string, Promise<string>>());
   const cardRef = useRef<HTMLElement>(null);
+  const autoSpeakRef = useRef(autoSpeak);
+  const speakRef = useRef<(text: string) => void>(() => undefined);
+  autoSpeakRef.current = autoSpeak;
 
   const closePopup = useCallback(() => {
     window.speechSynthesis?.cancel();
@@ -164,6 +169,11 @@ export default function GlossLayer({
       placeRef.current = next;
       setPlace(next);
       setCardPoint(client);
+      if (autoSpeakRef.current) {
+        window.setTimeout(() => {
+          if (placeRef.current?.span.id === span.id) speakRef.current(span.text);
+        }, 0);
+      }
       const requestId = ++enrichRequest.current;
       if (onEnrich && !span.simple_en) {
         setEnriching(true);
@@ -361,8 +371,9 @@ export default function GlossLayer({
     return true;
   }, []);
 
-  const speak = useCallback(async () => {
-    if (!place || !place.span.text.trim()) return;
+  const speak = useCallback(async (requestedText?: string) => {
+    const text = requestedText?.trim() || place?.span.text.trim();
+    if (!text) return;
     if (speaking || speechLoading) {
       speechRequest.current += 1;
       audioRef.current?.pause();
@@ -372,7 +383,6 @@ export default function GlossLayer({
       setSpeechLoading(false);
       return;
     }
-    const text = place.span.text.trim();
     const requestId = ++speechRequest.current;
     const cached = audioUrls.current.get(text);
     if (cached) {
@@ -420,6 +430,9 @@ export default function GlossLayer({
       if (requestId === speechRequest.current) setSpeechLoading(false);
     }
   }, [fetchAudio, place, speakWithBrowser, speaking, speechLoading]);
+  speakRef.current = (text) => {
+    void speak(text);
+  };
   const canSpeak = typeof Audio !== "undefined" || "speechSynthesis" in window;
 
   const point = cardPoint ?? place?.client;
@@ -448,7 +461,7 @@ export default function GlossLayer({
                 className="gloss-speak"
                 aria-label={speaking || speechLoading ? "停止朗读" : "朗读英文"}
                 title={speaking || speechLoading ? "停止朗读" : "朗读英文"}
-                onClick={speak}
+                onClick={() => void speak()}
                 disabled={!canSpeak || !place.span.text.trim()}
               >
                 {speaking || speechLoading ? <VolumeX size={16} /> : <Volume2 size={16} />}

@@ -85,7 +85,7 @@ export default function Layout() {
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => navigate("/settings")}>
                 <Settings size={16} className="mr-2" />
-                连接设置
+                设置
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() => {
