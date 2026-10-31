@@ -41,6 +41,7 @@ type Workspace = {
   document: { title: string; page_count: number; blocks: { id: string; page: number }[] };
   state: { mode: ReaderMode; block_id: string };
   has_result: boolean;
+  task_mode?: string;
   pdf_message: string;
   paper_id: string;
 };
@@ -100,7 +101,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   versionRef.current = version;
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  const awaitingResult = workspace !== null && !workspace.has_result;
+  const awaitingResult = workspace !== null && !workspace.has_result && workspace.task_mode !== "gloss";
   const reopen = reader.reopen;
   const build = bundle?.builds.find((b) => b.kind === mode);
   const isBuilding = generating || build?.status === "running";

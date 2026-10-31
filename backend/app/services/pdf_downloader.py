@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
+import os
 import re
 import socket
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -34,6 +37,13 @@ ACADEMIC_HOSTS = frozenset(
 BLOCKED_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
 
 DEFAULT_MAX_DOWNLOAD_MB = 50
+DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 240
+RANGE_CHUNK_BYTES = 4 * 1024 * 1024
+# Some academic CDNs throttle concurrent ranges from one address. Keep the
+# number of in-flight ranges small while still resetting stalled streams.
+RANGE_CONCURRENCY = 2
+RANGE_REQUEST_TIMEOUT_SECONDS = 20
+RANGE_ATTEMPTS = 3
 
 MAX_REDIRECTS = 5
 
@@ -49,9 +59,16 @@ class PdfDownloader:
     def __init__(
         self,
         max_download_mb: int = DEFAULT_MAX_DOWNLOAD_MB,
+        timeout_seconds: float = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS,
+        proxy: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.max_download_bytes = max_download_mb * 1024 * 1024
+        self.timeout_seconds = timeout_seconds
+        # Public academic CDNs may throttle direct connections from cloud IPs.
+        # A deployment can opt into its managed egress proxy without enabling
+        # httpx's broad environment proxy handling.
+        self.proxy = proxy if proxy is not None else os.getenv("EASYPAPER_DOWNLOAD_PROXY", "").strip() or None
         # ``transport`` is a test seam; production callers leave it as None.
         self._transport = transport
 
@@ -62,54 +79,139 @@ class PdfDownloader:
         ``httpx.HTTPStatusError`` for HTTP errors, and
         ``httpx.TimeoutException`` on timeout.
         """
+        async with asyncio.timeout(self.timeout_seconds):
+            return await self._download(url)
+
+    async def _download(self, url: str) -> DownloadResult:
         normalized_url = self._normalize_url(url)
 
         async with httpx.AsyncClient(
             follow_redirects=False,
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            headers={"User-Agent": "EasyPaper/1.0 (Academic PDF Downloader)"},
+            trust_env=False,
+            proxy=self.proxy,
+            timeout=httpx.Timeout(self.timeout_seconds, connect=min(10.0, self.timeout_seconds)),
+            limits=httpx.Limits(max_connections=RANGE_CONCURRENCY, max_keepalive_connections=0),
+            headers={"User-Agent": "EasyPaper/1.0 (Academic PDF Downloader)", "Accept-Encoding": "identity"},
             transport=self._transport,
         ) as client:
             current_url = normalized_url
-            for _ in range(MAX_REDIRECTS + 1):
-                # Re-validate every hop: a redirect can point at an internal host.
-                self._validate_url_security(current_url)
-                response = await client.get(current_url)
-                if not response.is_redirect:
+            for hop in range(MAX_REDIRECTS + 1):
+                # Resolve once and validate every address before connecting. In
+                # direct mode we connect to that exact address while preserving
+                # Host/TLS SNI; proxy mode lets the trusted proxy resolve the
+                # hostname after this public-address check.
+                addresses = await asyncio.to_thread(self._validate_url_security, current_url)
+                target = httpx.URL(current_url)
+                pinned = target.copy_with(host=addresses[0])
+                # An HTTP proxy terminates the CONNECT target selection. Keep
+                # the hostname in that mode so TLS validates the academic
+                # site's certificate; direct connections remain IP-pinned.
+                request_target = target if self.proxy else pinned
+                ranged_total = None
+                async with client.stream(
+                    "GET",
+                    request_target,
+                    headers={"Host": target.netloc.decode("ascii"), "Range": "bytes=0-0"},
+                    extensions={"sni_hostname": target.host},
+                ) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        if not location or hop == MAX_REDIRECTS:
+                            raise ValueError("Too many redirects or missing redirect location")
+                        current_url = str(target.join(location))
+                        continue
+                    response.raise_for_status()
+                    if response.headers.get("content-encoding", "identity").lower() != "identity":
+                        raise ValueError("Compressed HTTP responses are not supported")
+                    self._validate_content_type(response.headers.get("content-type", ""), current_url)
+                    content_range = response.headers.get("content-range", "")
+                    range_match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
+                    if (
+                        response.status_code == 206
+                        and range_match
+                        and range_match.group(1) == "0"
+                        and range_match.group(2) == "0"
+                    ):
+                        ranged_total = int(range_match.group(3))
+                        if ranged_total > self.max_download_bytes:
+                            raise ValueError("Downloaded file too large")
+                        filename = self._extract_filename(current_url, response)
+                        continue_ranges = True
+                    elif response.status_code != 200:
+                        raise ValueError("Server returned an unsupported partial PDF response")
+                    else:
+                        continue_ranges = False
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > self.max_download_bytes:
+                        raise ValueError("Downloaded file too large")
+                    if not continue_ranges:
+                        chunks, size = [], 0
+                        async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                            size += len(chunk)
+                            if size > self.max_download_bytes:
+                                raise ValueError("Downloaded file too large")
+                            chunks.append(chunk)
+                        file_bytes = b"".join(chunks)
+                        if not file_bytes.startswith(b"%PDF"):
+                            raise ValueError("Downloaded file is not a valid PDF")
+                        filename = self._extract_filename(current_url, response)
+                if ranged_total is not None:
+                    file_bytes = await self._download_ranges(client, request_target, target, ranged_total)
+                    if not file_bytes.startswith(b"%PDF"):
+                        raise ValueError("Downloaded file is not a valid PDF")
                     break
-                location = response.headers.get("location")
-                if not location:
-                    break
-                current_url = str(response.url.join(location))
-            else:
-                raise ValueError("Too many redirects")
-
-            response.raise_for_status()
-
-            content_type = response.headers.get("content-type", "")
-            self._validate_content_type(content_type, current_url)
-
-            content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > self.max_download_bytes:
-                raise ValueError(
-                    f"File too large: {int(content_length) // (1024 * 1024)}MB "
-                    f"(max {self.max_download_bytes // (1024 * 1024)}MB)"
-                )
-
-            file_bytes = response.content
-            if len(file_bytes) > self.max_download_bytes:
-                raise ValueError(f"Downloaded file too large: {len(file_bytes) // (1024 * 1024)}MB")
-
-            if not file_bytes.startswith(b"%PDF"):
-                raise ValueError("Downloaded file is not a valid PDF")
-
-            filename = self._extract_filename(current_url, response)
+                break
 
         return DownloadResult(
             file_bytes=file_bytes,
             filename=filename,
             content_type="application/pdf",
         )
+
+    async def _download_ranges(
+        self, client: httpx.AsyncClient, pinned: httpx.URL, target: httpx.URL, total: int
+    ) -> bytes:
+        ranges = [
+            (start, min(total - 1, start + RANGE_CHUNK_BYTES - 1)) for start in range(0, total, RANGE_CHUNK_BYTES)
+        ]
+        semaphore = asyncio.Semaphore(RANGE_CONCURRENCY)
+
+        async def fetch(start: int, end: int) -> tuple[int, bytes]:
+            expected = end - start + 1
+            for attempt in range(1, RANGE_ATTEMPTS + 1):
+                try:
+                    async with semaphore:
+                        response = await client.get(
+                            pinned,
+                            headers={"Host": target.netloc.decode("ascii"), "Range": f"bytes={start}-{end}"},
+                            extensions={"sni_hostname": target.host},
+                            timeout=httpx.Timeout(
+                                min(RANGE_REQUEST_TIMEOUT_SECONDS, self.timeout_seconds),
+                                connect=min(10.0, self.timeout_seconds),
+                            ),
+                        )
+                    if response.status_code != 206:
+                        raise ValueError("Server did not honor PDF range request")
+                    if response.headers.get("content-encoding", "identity").lower() != "identity":
+                        raise ValueError("Compressed HTTP responses are not supported")
+                    content_range = response.headers.get("content-range", "")
+                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
+                    if (
+                        not match
+                        or tuple(map(int, match.groups())) != (start, end, total)
+                        or len(response.content) != expected
+                    ):
+                        raise ValueError("Server returned an invalid PDF range")
+                    return start, response.content
+                except (httpx.TimeoutException, httpx.NetworkError):
+                    if attempt == RANGE_ATTEMPTS:
+                        raise
+                    await asyncio.sleep(0.5 * attempt)
+            raise AssertionError("unreachable")
+
+        chunks = await asyncio.gather(*(fetch(start, end) for start, end in ranges))
+        chunks.sort(key=lambda item: item[0])
+        return b"".join(data for _, data in chunks)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -139,12 +241,14 @@ class PdfDownloader:
 
         return url
 
-    def _validate_url_security(self, url: str) -> None:
+    def _validate_url_security(self, url: str) -> list[str]:
         parsed = urlparse(url)
 
         if parsed.scheme not in ("http", "https"):
             raise ValueError("Only HTTP and HTTPS URLs are supported")
 
+        if parsed.username or parsed.password or parsed.port not in (None, 80, 443):
+            raise ValueError("URL credentials and non-standard ports are not supported")
         hostname = parsed.hostname or ""
         if hostname in BLOCKED_HOSTS:
             raise ValueError("URL points to a blocked host")
@@ -162,8 +266,12 @@ class PdfDownloader:
         # Resolve DNS and validate every address. A public-looking hostname can
         # still resolve to a loopback/private/link-local address (SSRF), and the
         # regex above only catches IPv4 literals — DNS resolution closes both gaps.
-        for ip in self._resolve_addresses(hostname):
+        addresses = self._resolve_addresses(hostname)
+        if not addresses:
+            raise ValueError("No public address found")
+        for ip in addresses:
             self._assert_public_ip(ip)
+        return addresses
 
     def _resolve_addresses(self, hostname: str) -> list[str]:
         # An IP literal needs no DNS lookup, but still must be validated.
@@ -184,7 +292,8 @@ class PdfDownloader:
         # IPv6 scope id (e.g. fe80::1%eth0) is irrelevant for the range check.
         ip = ipaddress.ip_address(ip_str.split("%")[0])
         if (
-            ip.is_private
+            not ip.is_global
+            or ip.is_private
             or ip.is_loopback
             or ip.is_link_local
             or ip.is_reserved
@@ -211,7 +320,7 @@ class PdfDownloader:
             if match:
                 name = match.group(1) or match.group(2)
                 if name and name.lower().endswith(".pdf"):
-                    return name
+                    return Path(name.replace("\\", "/")).name
 
         parsed = urlparse(url)
         path = parsed.path.rstrip("/")

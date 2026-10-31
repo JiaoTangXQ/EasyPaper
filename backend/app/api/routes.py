@@ -1,25 +1,31 @@
 import asyncio
 import json
 import logging
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from sqlmodel import Session
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from ..core.config import get_config
+from ..core.db import get_session
 from ..models.task import TaskStatus
 from ..models.user import User
 from ..services.ai_client import AIError
-from ..services.background_tasks import create_tracked_task
 from ..services.document_processor import DocumentProcessor
+from ..services.job_queue import JobQueue
 from ..services.paper_summarizer import PaperSummarizer
 from ..services.pdf_downloader import PdfDownloader
 from ..services.pdf_metadata import pdf_title
+from ..services.pdf_validation import validate_pdf
+from ..services.synced_reader import GlossImportError
 from ..services.task_manager import TaskManager
 from .deps import get_current_user
 
@@ -32,24 +38,85 @@ class UploadUrlRequest(BaseModel):
     highlight: bool = False
 
 
-def create_router(task_manager: TaskManager, processor: DocumentProcessor, reading_service=None) -> APIRouter:
+IMPORT_MODES = {"translate", "simplify", "gloss"}
+
+
+def create_router(
+    task_manager: TaskManager, processor: DocumentProcessor, reading_service=None, job_queue=None
+) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["documents"])
     cfg = get_config()
     _max_bytes = cfg.processing.max_upload_mb * 1024 * 1024
-    _semaphore = asyncio.Semaphore(cfg.processing.max_concurrent)
+    _semaphore = getattr(processor, "pdf_slots", asyncio.Semaphore(cfg.processing.max_concurrent))
     limiter = Limiter(key_func=get_remote_address)
     running: dict[str, asyncio.Task] = {}
+    queue = job_queue or JobQueue(cfg.processing)
 
-    def launch(task, file_bytes):
+    async def upload_slot(user: User = Depends(get_current_user)):
+        folder = Path(cfg.storage.temp_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(folder).free < cfg.security.min_free_disk_mb * 1024 * 1024:
+            raise HTTPException(507, "服务器存储空间不足，请联系管理员")
+        with queue.reserve(user.id) as start:
+            yield start
+
+    def launch(task, start):
+        async def prepare_imported_gloss(current):
+            task_id = current.task_id
+            reader = getattr(reading_service, "synced_reader", None) if reading_service else None
+            if reader is None:
+                task_manager.set_error(task_id, "原文点读暂时不可用，请稍后重试。")
+                return
+
+            def report(status, percent, message):
+                task_manager.update_progress(task_id, status, percent, message)
+
+            def on_batch(done, total):
+                percent = 20 + int(75 * done / max(total, 1))
+                report(TaskStatus.REWRITING, min(percent, 95), f"正在准备点读释义（{done}/{total}）")
+
+            report(TaskStatus.PARSING, 12, "正在索引原文…")
+            paper = SimpleNamespace(
+                task_id=current.task_id,
+                user_id=current.user_id,
+                filename=current.filename,
+                mode=current.mode,
+                original_pdf_path=current.original_pdf_path,
+                result_pdf_path=current.result_pdf_path,
+                result_dual_pdf_path=current.result_dual_pdf_path,
+            )
+            try:
+                await reader.prepare_gloss_for_task(paper, on_batch)
+            except GlossImportError as exc:
+                task_manager.set_error(task_id, str(exc))
+                return
+            except AIError:
+                logger.exception("原文点读准备超时: %s", task_id)
+                task_manager.set_error(task_id, "点读释义准备超时，已写好的部分会保留。请重试，会从停下的地方继续。")
+                return
+            except Exception:
+                logger.exception("原文点读准备失败: %s", task_id)
+                task_manager.set_error(task_id, "原文点读没有准备完成，请重试。原文仍可阅读。")
+                return
+            report(TaskStatus.COMPLETED, 100, "原文点读已准备好")
+
         async def process():
             async with _semaphore:
                 current = task_manager.get_task(task.task_id)
-                if current and current.status != TaskStatus.CANCELLED:
-                    await processor.process(
-                        task.task_id, file_bytes, task.filename, mode=task.mode, highlight=task.highlight
-                    )
+                if not current or current.status == TaskStatus.CANCELLED:
+                    return
+                if current.mode == "gloss":
+                    await prepare_imported_gloss(current)
+                    return
+                await processor.process(
+                    task.task_id,
+                    Path(current.original_pdf_path).read_bytes(),
+                    task.filename,
+                    mode=task.mode,
+                    highlight=task.highlight,
+                )
 
-        run = create_tracked_task(process())
+        run = start(process())
         running[task.task_id] = run
         run.add_done_callback(lambda _: running.pop(task.task_id, None))
 
@@ -61,12 +128,16 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         mode: str = Form("translate"),
         highlight: bool = Form(False),
         user: User = Depends(get_current_user),
+        start: Any = Depends(upload_slot),
     ) -> dict[str, Any]:
-        if mode not in ("translate", "simplify"):
-            raise HTTPException(status_code=400, detail="mode must be 'translate' or 'simplify'")
+        if mode not in IMPORT_MODES:
+            raise HTTPException(status_code=400, detail="mode must be 'translate', 'simplify', or 'gloss'")
+        if mode == "gloss":
+            highlight = False
         if file.content_type not in {"application/pdf", "application/octet-stream"}:
             raise HTTPException(status_code=400, detail="仅支持PDF文件")
-        file_bytes = await file.read()
+        file_bytes = await file.read(_max_bytes + 1)
+        await file.close()
         if not file_bytes:
             raise HTTPException(status_code=400, detail="文件内容为空")
         if len(file_bytes) > _max_bytes:
@@ -75,6 +146,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
                 detail=f"文件大小超过限制（最大 {cfg.processing.max_upload_mb}MB）",
             )
 
+        await asyncio.to_thread(validate_pdf, file_bytes, cfg.processing.max_pages)
         task = task_manager.create_task(
             file.filename or "document.pdf", user_id=user.id, mode=mode, highlight=highlight
         )
@@ -87,7 +159,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         # Update task with original path
         task_manager.update_original_path(task.task_id, str(original_path))
 
-        launch(task, file_bytes)
+        launch(task, start)
 
         return {"task_id": task.task_id}
 
@@ -97,9 +169,12 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         request: Request,
         body: UploadUrlRequest,
         user: User = Depends(get_current_user),
+        start: Any = Depends(upload_slot),
     ) -> dict[str, Any]:
-        if body.mode not in ("translate", "simplify"):
-            raise HTTPException(status_code=400, detail="mode must be 'translate' or 'simplify'")
+        if body.mode not in IMPORT_MODES:
+            raise HTTPException(status_code=400, detail="mode must be 'translate', 'simplify', or 'gloss'")
+        if body.mode == "gloss":
+            body.highlight = False
         if not body.url.strip():
             raise HTTPException(status_code=400, detail="URL is required")
 
@@ -113,7 +188,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
                 status_code=502,
                 detail=f"Failed to download PDF: HTTP {exc.response.status_code}",
             ) from exc
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, TimeoutError) as exc:
             raise HTTPException(status_code=504, detail="Download timed out") from exc
         except Exception as exc:
             logger.exception("Unexpected error downloading PDF from URL")
@@ -128,6 +203,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
                 detail=f"文件大小超过限制（最大 {cfg.processing.max_upload_mb}MB）",
             )
 
+        await asyncio.to_thread(validate_pdf, file_bytes, cfg.processing.max_pages)
         task = task_manager.create_task(filename, user_id=user.id, mode=body.mode, highlight=body.highlight)
 
         original_path = Path(task_manager.config.storage.temp_dir) / f"{task.task_id}_original.pdf"
@@ -136,14 +212,20 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
 
         task_manager.update_original_path(task.task_id, str(original_path))
 
-        launch(task, file_bytes)
+        launch(task, start)
 
         return {"task_id": task.task_id}
 
     @router.get("/tasks")
-    async def list_tasks(user: User = Depends(get_current_user)) -> list[dict[str, Any]]:
-        tasks = task_manager.list_tasks(user_id=user.id)
-        reading = task_manager.reading_overview(user.id)
+    async def list_tasks(
+        user: User = Depends(get_current_user), session: Session = Depends(get_session)
+    ) -> list[dict[str, Any]]:
+        # The dashboard polls this every 2 seconds and aborts the previous call.
+        # Those cancelled requests kept running and held a pooled connection each.
+        user_id = user.id
+        session.close()
+        tasks = task_manager.list_tasks(user_id=user_id)
+        reading = task_manager.reading_overview(user_id)
         titles = await asyncio.to_thread(lambda: [pdf_title(t.original_pdf_path) for t in tasks])
         translated_titles = reading_service.cached_title_translations(tasks, titles) if reading_service else {}
         return [
@@ -167,9 +249,13 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         ]
 
     @router.post("/tasks/{task_id}/title-translation")
-    async def translate_title(task_id: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
+    async def translate_title(
+        task_id: str, user: User = Depends(get_current_user), session: Session = Depends(get_session)
+    ) -> dict[str, Any]:
+        user_id = user.id
+        session.close()
         task = task_manager.get_task(task_id)
-        if not task or task.user_id != user.id:
+        if not task or task.user_id != user_id:
             raise HTTPException(status_code=404, detail="论文不存在或无权访问。")
         title = await asyncio.to_thread(pdf_title, task.original_pdf_path)
         if not title or len(title) > 1000:
@@ -261,7 +347,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         return {"status": "cancelled"}
 
     @router.post("/tasks/{task_id}/retry")
-    async def retry_task(task_id: str, user: User = Depends(get_current_user)):
+    async def retry_task(task_id: str, user: User = Depends(get_current_user), start: Any = Depends(upload_slot)):
         task = task_manager.get_task(task_id)
         if not task or task.user_id != user.id:
             raise HTTPException(404, "任务不存在")
@@ -270,7 +356,7 @@ def create_router(task_manager: TaskManager, processor: DocumentProcessor, readi
         if not task.original_pdf_path or not Path(task.original_pdf_path).is_file():
             raise HTTPException(404, "原始文件不存在，请重新导入。")
         task_manager.requeue(task_id)
-        launch(task, Path(task.original_pdf_path).read_bytes())
+        launch(task, start)
         return {"task_id": task_id, "status": "pending"}
 
     @router.post("/summary/{task_id}")

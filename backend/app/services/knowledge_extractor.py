@@ -328,7 +328,7 @@ class KnowledgeExtractor:
             try:
                 return await self._do_llm_call(system_prompt, user_content)
             except Exception as exc:
-                if isinstance(exc, AIError) and (self.ai.config.provider == "codex" or not exc.retryable):
+                if isinstance(exc, AIError) and (self.ai.config.uses_cli or not exc.retryable):
                     raise
                 if attempt == max_retries - 1:
                     logger.error("LLM call [%s] failed after %d retries: %s", label, max_retries, exc)

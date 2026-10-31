@@ -21,21 +21,53 @@ class CodexConfig(BaseModel):
     max_concurrent: int = Field(2, ge=1, le=16)
 
 
+class CursorConfig(BaseModel):
+    executable: str = "cursor-p"
+    # Flat catalog id. The bracket form is rejected when Cursor's parameterized
+    # model catalog does not return within its 2 second limit.
+    model: str = "grok-4.7-high-fast"
+    timeout_seconds: float = Field(180, ge=1, le=1800)
+    max_concurrent: int = Field(1, ge=1, le=4)
+
+
 class LLMConfig(BaseModel):
-    provider: Literal["api", "codex"] = "api"
+    provider: Literal["api", "codex", "cursor"] = "api"
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    cursor: CursorConfig = Field(default_factory=CursorConfig)
     api_key: str = Field("", alias="api_key")
     base_url: str = Field("https://api.zhizengzeng.com/v1", alias="base_url")
     model: str = Field("gemini-2.5-flash", alias="model")
     judge_model: str = Field("gemini-2.5-flash", alias="judge_model")
 
+    @property
+    def uses_cli(self) -> bool:
+        return self.provider in {"codex", "cursor"}
+
+    @property
+    def request_timeout(self) -> float:
+        if self.provider == "cursor":
+            return self.cursor.timeout_seconds
+        if self.provider == "codex":
+            return self.codex.timeout_seconds
+        return 180
+
+    @property
+    def is_configured(self) -> bool:
+        if self.provider in {"codex", "cursor"}:
+            return True  # CLI authentication is checked when invoked.
+        return bool(
+            self.api_key.strip() and self.api_key != "YOUR_API_KEY" and self.base_url.strip() and self.model.strip()
+        )
+
 
 class ProcessingConfig(BaseModel):
-    max_pages: int = Field(100, alias="max_pages")
-    max_upload_mb: int = Field(50, alias="max_upload_mb")
-    max_concurrent: int = Field(3, alias="max_concurrent")
+    max_pages: int = Field(100, ge=1, le=500, alias="max_pages")
+    max_upload_mb: int = Field(50, ge=1, le=128, alias="max_upload_mb")
+    max_concurrent: int = Field(3, ge=1, le=8, alias="max_concurrent")
     # Paragraph requests per document; independent of the concurrent document limit.
     translation_threads: int = Field(8, ge=1, le=16)
+    max_pending: int = Field(8, ge=1, le=32)
+    max_pending_per_user: int = Field(2, ge=1, le=8)
     preview_html: bool = Field(True, alias="preview_html")
 
 
@@ -64,9 +96,15 @@ class SecurityConfig(BaseModel):
     # Public deployments should disable self-service registration and create
     # accounts via `python -m app.cli create-user`.
     allow_registration: bool = Field(True, alias="allow_registration")
+    local_sync_enabled: bool = True
+    daily_operations: int = Field(300, ge=1, le=10000)
+    daily_imports: int = Field(20, ge=1, le=1000)
+    max_users: int = Field(5, ge=1, le=100)
+    min_free_disk_mb: int = Field(2048, ge=0)
 
 
 class AgentConfig(BaseModel):
+    enabled: bool = True
     api_keys: list[str] = Field(default=["CHANGE_ME"], alias="api_keys")
     draft_ttl_minutes: int = Field(30, alias="draft_ttl_minutes")
     mcp_mount_path: str = Field("/mcp", alias="mcp_mount_path")
@@ -90,13 +128,13 @@ def validate_security(config: AppConfig, app_env: str) -> None:
     """
     is_prod = app_env.lower() in {"production", "prod"}
 
-    if "CHANGE_THIS" in config.security.secret_key:
-        message = "security.secret_key is still the default value. Set a strong secret key in config.yaml."
+    if "CHANGE_THIS" in config.security.secret_key or len(config.security.secret_key.encode()) < 32:
+        message = "security.secret_key must contain at least 32 bytes and must not be a placeholder. Set a strong secret key in config.yaml."
         if is_prod:
             raise RuntimeError(f"Refusing to start in production: {message}")
         logger.warning("SECURITY WARNING: %s", message)
 
-    if any("CHANGE_ME" in key for key in config.agent.api_keys):
+    if config.agent.enabled and any("CHANGE_ME" in key or len(key) < 32 for key in config.agent.api_keys):
         message = "agent.api_keys still contains the default 'CHANGE_ME'."
         if is_prod:
             raise RuntimeError(f"Refusing to start in production: {message}")
@@ -141,6 +179,36 @@ def get_config() -> AppConfig:
     raw = _load_yaml(config_path)
     if provider := os.getenv("EASYPAPER_AI_PROVIDER"):
         raw.setdefault("llm", {})["provider"] = provider
+    for variable, section, key in [
+        ("EASYPAPER_SECRET_KEY", "security", "secret_key"),
+        ("LLM_API_KEY", "llm", "api_key"),
+        ("LLM_BASE_URL", "llm", "base_url"),
+        ("LLM_MODEL", "llm", "model"),
+    ]:
+        if value := os.getenv(variable):
+            raw.setdefault(section, {})[key] = value
+    for variable, key in [
+        ("EASYPAPER_CODEX_EXECUTABLE", "executable"),
+        ("EASYPAPER_CODEX_MODEL", "model"),
+        ("EASYPAPER_CODEX_REASONING_EFFORT", "reasoning_effort"),
+        ("EASYPAPER_CODEX_TIMEOUT_SECONDS", "timeout_seconds"),
+        ("EASYPAPER_CODEX_MAX_CONCURRENT", "max_concurrent"),
+    ]:
+        if value := os.getenv(variable):
+            raw.setdefault("llm", {}).setdefault("codex", {})[key] = value
+    for variable, key in [
+        ("EASYPAPER_CURSOR_EXECUTABLE", "executable"),
+        ("EASYPAPER_CURSOR_MODEL", "model"),
+        ("EASYPAPER_CURSOR_TIMEOUT_SECONDS", "timeout_seconds"),
+        ("EASYPAPER_CURSOR_MAX_CONCURRENT", "max_concurrent"),
+    ]:
+        if value := os.getenv(variable):
+            raw.setdefault("llm", {}).setdefault("cursor", {})[key] = value
+    # The server edition is invitation-only. Local filesystem access and shared
+    # agent credentials are intentionally unavailable, even with an old config.
+    if os.getenv("APP_ENV", "").lower() in {"production", "prod"}:
+        raw.setdefault("security", {}).update(allow_registration=False, local_sync_enabled=False)
+        raw.setdefault("agent", {}).update(enabled=False, api_keys=[])
     config = AppConfig(**raw)
 
     # Validate critical settings at startup (fail-fast in production).

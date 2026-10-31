@@ -50,16 +50,17 @@ class CodexTranslationExecutor:
             )
             self._pending.add(future)
         try:
-            return future.result(timeout=self.ai.config.codex.timeout_seconds + 5)
+            return future.result(timeout=self.ai.config.request_timeout + 5)
         except Exception as exc:
-            message = str(exc) if isinstance(exc, AIError) else "Codex PDF 翻译已中止，请重试。"
+            label = "Cursor" if self.ai.config.provider == "cursor" else "Codex"
+            message = str(exc) if isinstance(exc, AIError) else f"{label} PDF 翻译已中止，请重试。"
             self.cancel(message)
             raise PDFTranslationAbort(message) from None
         finally:
             with self._lock:
                 self._pending.discard(future)
 
-    def cancel(self, message="Codex PDF 翻译已取消。"):
+    def cancel(self, message="PDF 翻译已取消。"):
         with self._lock:
             self._error = self._error or message
             for future in self._pending:

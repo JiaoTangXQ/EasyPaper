@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -16,6 +17,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
+from ..core.config import get_config
 from ..core.db import engine
 from ..models.knowledge import (
     Flashcard,
@@ -27,7 +29,7 @@ from ..models.knowledge import (
 )
 from ..models.task import Task, TaskStatus
 from ..models.user import User
-from ..services.background_tasks import create_tracked_task
+from ..services.job_queue import JobQueue
 from ..services.knowledge_export import to_bibtex
 from ..services.knowledge_extractor import KnowledgeExtractor
 from ..services.obsidian_sync import ObsidianSyncService, get_obsidian_sync_lock
@@ -105,18 +107,30 @@ def _ensure_extracting_paper(
     return paper, True
 
 
-def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
+def create_knowledge_router(extractor: KnowledgeExtractor, job_queue=None) -> APIRouter:
     router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+    queue = job_queue or JobQueue(get_config().processing)
+    extraction_slots = asyncio.Semaphore(get_config().processing.max_concurrent)
+
+    async def extraction_slot(user: User = Depends(get_current_user)):
+        with queue.reserve(user.id) as start:
+            yield start
+
     limiter = Limiter(key_func=get_remote_address)
 
     # ------------------------------------------------------------------
     # Obsidian 本地同步设置
     # ------------------------------------------------------------------
 
+    def require_local_sync():
+        if not get_config().security.local_sync_enabled:
+            raise HTTPException(403, "服务器版不支持本地目录同步，请下载 Obsidian ZIP")
+
     @router.get("/settings/obsidian/vaults")
     async def detect_obsidian_vaults(
         user: User = Depends(get_current_user),  # noqa: ARG001
     ) -> dict[str, Any]:
+        require_local_sync()
         with Session(engine) as session:
             service = ObsidianSyncService(session)
             return {"vaults": service.detect_vaults()}
@@ -125,6 +139,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
     async def get_obsidian_settings(
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
+        require_local_sync()
         with Session(engine) as session:
             service = ObsidianSyncService(session)
             settings = service.get_settings(user.id)
@@ -135,6 +150,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         payload: ObsidianSettingsRequest,
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
+        require_local_sync()
         with Session(engine) as session:
             service = ObsidianSyncService(session)
             try:
@@ -151,6 +167,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         payload: ObsidianSettingsRequest,
         user: User = Depends(get_current_user),  # noqa: ARG001
     ) -> dict[str, Any]:
+        require_local_sync()
         with Session(engine) as session:
             service = ObsidianSyncService(session)
             try:
@@ -168,6 +185,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         request: Request,
         task_id: str,
         user: User = Depends(get_current_user),
+        start: Any = Depends(extraction_slot),
     ) -> dict[str, str]:
         """对已完成的 task 触发知识提取。"""
         with Session(engine) as session:
@@ -189,7 +207,6 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         if not task.original_pdf_path or not Path(task.original_pdf_path).exists():
             raise HTTPException(status_code=404, detail="原始 PDF 文件不存在或已过期")
 
-        pdf_bytes = Path(task.original_pdf_path).read_bytes()
         with Session(engine) as session:
             paper, started = _ensure_extracting_paper(
                 session=session,
@@ -206,11 +223,13 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         # 异步执行提取
         async def _do_extract():
             try:
-                await extractor.extract(pdf_bytes, task_id, user.id, paper_id)
+                async with extraction_slots:
+                    pdf_bytes = await asyncio.to_thread(Path(task.original_pdf_path).read_bytes)
+                    await extractor.extract(pdf_bytes, task_id, user.id, paper_id)
             except Exception:
                 logger.exception("Knowledge extraction failed for task %s", task_id)
 
-        create_tracked_task(_do_extract())
+        start(_do_extract())
 
         return {"paper_id": paper_id, "status": "extracting"}
 
@@ -296,6 +315,7 @@ def create_knowledge_router(extractor: KnowledgeExtractor) -> APIRouter:
         paper_id: str,
         user: User = Depends(get_current_user),
     ) -> dict[str, Any]:
+        require_local_sync()
         """同步单篇论文知识到本地 Obsidian vault。"""
         lock = get_obsidian_sync_lock(user.id, paper_id)
         if not lock.acquire(blocking=False):

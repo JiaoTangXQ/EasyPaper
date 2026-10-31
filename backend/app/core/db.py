@@ -41,6 +41,7 @@ def init_db():
         knowledge,  # noqa: F401
         reading,  # noqa: F401
         task,  # noqa: F401
+        usage,  # noqa: F401
         user,  # noqa: F401
     )
 
@@ -59,6 +60,12 @@ def init_db():
 
     SQLModel.metadata.create_all(engine)
     _migrate_db()
+    # Additive migration for existing SQLite and PostgreSQL installations.
+    from sqlalchemy import inspect, text
+
+    if "token_version" not in {c["name"] for c in inspect(engine).get_columns("user")}:
+        with engine.begin() as connection:
+            connection.execute(text('ALTER TABLE "user" ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'))
 
 
 def _migrate_db() -> None:

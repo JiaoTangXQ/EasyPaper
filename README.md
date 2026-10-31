@@ -1,5 +1,7 @@
 # EasyPaper
 
+For a private multi-user server, follow the [deployment guide](docs/DEPLOYMENT.md).
+
 **Turn academic papers into knowledge you keep.**
 
 EasyPaper is a self-hosted web app that helps you read, understand, and retain knowledge from English academic papers. Upload a PDF or paste a paper link — get back a translated or simplified version with layout intact, AI-highlighted key sentences, and a portable knowledge base you can export anywhere.
@@ -202,7 +204,7 @@ For local Obsidian sync in Docker, mount your host vault into the backend contai
 
 ### Option 2: Local Development
 
-**Prerequisites:** Python 3.11+, Node.js 18+ (Node 20 recommended), an OpenAI-compatible LLM API key
+**Prerequisites:** Python 3.11+, Node.js 22.12+ and uv 0.12.13, an OpenAI-compatible LLM API key
 
 **Backend:**
 
@@ -210,7 +212,7 @@ For local Obsidian sync in Docker, mount your host vault into the backend contai
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip sync --python .venv/bin/python requirements-dev.lock
 
 cp config/config.example.yaml config/config.yaml
 # Edit config.yaml — add your API key
@@ -326,7 +328,7 @@ curl -X POST http://127.0.0.1:8000/api/agent/v1/translate \
 | Backend | FastAPI, PyMuPDF, pdf2zh (PDFMathTranslate), httpx |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, Radix UI |
 | Database | SQLite via SQLModel |
-| Auth | JWT (python-jose), bcrypt, OAuth2 bearer |
+| Auth | JWT (PyJWT), bcrypt, OAuth2 bearer |
 | AI/LLM | Any OpenAI-compatible API (configurable) |
 | DevOps | Docker Compose, GitHub Actions, ruff, ESLint |
 

@@ -9,8 +9,10 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
+import { useFeatures } from "@/lib/features";
 
 export default function Login() {
+  const features = useFeatures();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -74,10 +76,16 @@ export default function Login() {
               登录
             </Button>
             <div className="text-sm text-center text-muted-foreground">
-              没有账户？
-              <Link to="/register" className="underline">
-                注册
-              </Link>
+              {features.registration ? (
+                <>
+                  没有账户？
+                  <Link to="/register" className="underline">
+                    注册
+                  </Link>
+                </>
+              ) : (
+                "账号由管理员开通，请联系管理员。"
+              )}
             </div>
           </CardFooter>
         </form>

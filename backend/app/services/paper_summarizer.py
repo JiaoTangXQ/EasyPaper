@@ -105,7 +105,7 @@ class PaperSummarizer:
             try:
                 return await self.ai.complete_json(SUMMARY_SYSTEM_PROMPT, f"Paper text:\n\n{text}", max_tokens=4096)
             except AIError as exc:
-                if self.ai.config.provider == "codex" or not exc.retryable or attempt == 2:
+                if self.ai.config.uses_cli or not exc.retryable or attempt == 2:
                     raise
                 await asyncio.sleep(2 * (2**attempt))
         raise AIError("摘要生成失败。")

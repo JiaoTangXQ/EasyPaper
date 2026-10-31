@@ -206,3 +206,17 @@ def test_layout_titles_are_not_joined_to_previous_page_fragments(tmp_path, monke
         )
     assert len(records) == 3
     assert all("flow_group" not in record for record in records)
+
+
+def test_pdf2zh_interpreter_keeps_pdfminer_color_state_compatibility():
+    """pdf2zh 1.9.11 expects the color state fields removed in newer pdfminer."""
+    from pdf2zh.pdfinterp import PDFPageInterpreterEx
+    from pdfminer.pdfdevice import PDFDevice
+    from pdfminer.pdfinterp import PDFResourceManager
+    from pdfminer.utils import MATRIX_IDENTITY
+
+    interpreter = PDFPageInterpreterEx(PDFResourceManager(), PDFDevice(PDFResourceManager()), {})
+    interpreter.init_resources({})
+    interpreter.init_state(MATRIX_IDENTITY)
+    interpreter.push(0)
+    interpreter.do_scn()

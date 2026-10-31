@@ -1,0 +1,13 @@
+[Unit]
+Description=EasyPaper consistent daily backup (keep 7)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+WorkingDirectory=/opt/easypaper/current
+ExecStart=/usr/bin/python3 /opt/easypaper/current/deploy/daily_backup.py
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

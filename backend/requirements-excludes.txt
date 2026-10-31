@@ -1,0 +1,5 @@
+# EasyPaper uses the PDF library only, never pdf2zh's Gradio web UI.
+# Exclude its unused web server and frontend dependencies from the image.
+gradio
+gradio-client
+gradio-pdf

@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Languages,
   BookOpen,
+  MousePointerClick,
   Trash2,
   Search,
   X,
@@ -36,9 +37,15 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
+import { useFeatures } from "@/lib/features";
 
-const MAX_FILE_SIZE_MB = 50;
 const ACTIVE_TASK_STATUSES = new Set(["pending", "processing", "parsing", "rewriting", "rendering", "highlighting"]);
+
+function resultLabel(mode?: string) {
+  if (mode === "simplify") return "简化英文";
+  if (mode === "gloss") return "原文点读";
+  return "中文译文";
+}
 
 interface Task {
   task_id: string;
@@ -59,7 +66,7 @@ interface Task {
   created_at: string;
   percent?: number;
   message?: string;
-  mode?: "translate" | "simplify";
+  mode?: "translate" | "simplify" | "gloss";
   highlight?: boolean;
   can_read?: boolean;
   reading?: { block_id: string; page?: number; understood_count: number; updated_at: string };
@@ -90,6 +97,8 @@ function PaperTitleSubtitle({ task, state, retry }: { task: Task; state?: TitleS
 }
 
 const Dashboard = () => {
+  const features = useFeatures();
+  const MAX_FILE_SIZE_MB = features.max_upload_mb;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -97,7 +106,7 @@ const Dashboard = () => {
   const [statusFilter, setStatusFilter] = useWorkspaceValue("papers:status", "all");
   const [extracting, setExtracting] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<"translate" | "simplify">("translate");
+  const [mode, setMode] = useState<"translate" | "simplify" | "gloss">("translate");
   const [search, setSearch] = useWorkspaceValue("papers:search");
   const [highlight, setHighlight] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -141,42 +150,46 @@ const Dashboard = () => {
     }
   }, []);
 
-  const translateTitle = useCallback(async (task: Task) => {
-    const source = task.title?.trim();
-    if (!source || task.title_zh || /[\u3400-\u9fff]/.test(source)) return;
-    const key = `${task.task_id}:${source}`;
-    if (titleCalls.current.has(key)) return;
-    requestedTitles.current.add(key);
-    const controller = new AbortController();
-    titleCalls.current.set(key, controller);
-    setTitleStates((current) => ({ ...current, [task.task_id]: { source, status: "pending" } }));
-    try {
-      const { data } = await api.post<{ title: string; title_zh: string | null }>(
-        `/api/tasks/${task.task_id}/title-translation`,
-        {},
-        { signal: controller.signal },
-      );
-      if (!controller.signal.aborted) {
-        if (!data.title_zh) throw new Error("中文标题暂不可用");
-        setTasks((current) =>
-          current.map((item) =>
-            item.task_id === task.task_id && item.title === data.title ? { ...item, title_zh: data.title_zh } : item,
-          ),
+  const translateTitle = useCallback(
+    async (task: Task) => {
+      if (!features.ai_available) return;
+      const source = task.title?.trim();
+      if (!source || task.title_zh || /[\u3400-\u9fff]/.test(source)) return;
+      const key = `${task.task_id}:${source}`;
+      if (titleCalls.current.has(key)) return;
+      requestedTitles.current.add(key);
+      const controller = new AbortController();
+      titleCalls.current.set(key, controller);
+      setTitleStates((current) => ({ ...current, [task.task_id]: { source, status: "pending" } }));
+      try {
+        const { data } = await api.post<{ title: string; title_zh: string | null }>(
+          `/api/tasks/${task.task_id}/title-translation`,
+          {},
+          { signal: controller.signal },
         );
-        setTitleStates((current) => {
-          if (current[task.task_id]?.source !== source) return current;
-          const next = { ...current };
-          delete next[task.task_id];
-          return next;
-        });
+        if (!controller.signal.aborted) {
+          if (!data.title_zh) throw new Error("中文标题暂不可用");
+          setTasks((current) =>
+            current.map((item) =>
+              item.task_id === task.task_id && item.title === data.title ? { ...item, title_zh: data.title_zh } : item,
+            ),
+          );
+          setTitleStates((current) => {
+            if (current[task.task_id]?.source !== source) return current;
+            const next = { ...current };
+            delete next[task.task_id];
+            return next;
+          });
+        }
+      } catch {
+        if (!controller.signal.aborted)
+          setTitleStates((current) => ({ ...current, [task.task_id]: { source, status: "error" } }));
+      } finally {
+        if (titleCalls.current.get(key) === controller) titleCalls.current.delete(key);
       }
-    } catch {
-      if (!controller.signal.aborted)
-        setTitleStates((current) => ({ ...current, [task.task_id]: { source, status: "error" } }));
-    } finally {
-      if (titleCalls.current.get(key) === controller) titleCalls.current.delete(key);
-    }
-  }, []);
+    },
+    [features.ai_available],
+  );
 
   useEffect(
     () => () => {
@@ -225,12 +238,16 @@ const Dashboard = () => {
   };
 
   const uploadFile = async (file: File) => {
+    if (!features.ai_available) {
+      toast.error("AI 服务尚未就绪，请联系管理员。");
+      return;
+    }
     if (uploadProgress !== null || !validateFile(file)) return;
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("mode", mode);
-    formData.append("highlight", String(highlight));
+    formData.append("highlight", String(mode === "gloss" ? false : highlight));
 
     setUploadProgress(0);
     try {
@@ -286,6 +303,7 @@ const Dashboard = () => {
   };
 
   const submitUrl = async () => {
+    if (!features.ai_available) return;
     const trimmed = pdfUrl.trim();
     if (!trimmed) {
       toast.error("请输入 PDF 链接。");
@@ -302,7 +320,7 @@ const Dashboard = () => {
       await api.post("/api/upload-url", {
         url: trimmed,
         mode,
-        highlight,
+        highlight: mode === "gloss" ? false : highlight,
       });
       toast.success("PDF 下载成功，已开始处理！");
       setPdfUrl("");
@@ -394,11 +412,16 @@ const Dashboard = () => {
   };
   return (
     <div className="page-stack">
+      {!features.ai_available && (
+        <p role="status" className="rounded-xl border bg-muted p-4 text-sm text-muted-foreground">
+          AI 服务尚未就绪，请联系管理员。已保存的论文仍可阅读。
+        </p>
+      )}
       <PageHeader
         title="我的论文"
         description="从上次停下的地方，继续读。"
         actions={
-          <Button onClick={() => setImportOpen(true)}>
+          <Button disabled={!features.ai_available} onClick={() => setImportOpen(true)}>
             <Plus />
             导入论文
           </Button>
@@ -408,10 +431,10 @@ const Dashboard = () => {
         <DialogContent className="import-dialog">
           <DialogHeader>
             <DialogTitle>导入论文</DialogTitle>
-            <DialogDescription>原文会保留，生成译文时仍可先读原文。</DialogDescription>
+            <DialogDescription>原文会保留。可以选择中文译文、简化英文，或在原文上点读。</DialogDescription>
           </DialogHeader>
           <fieldset className="space-y-2">
-            <legend className="text-sm font-medium mb-2">同时生成</legend>
+            <legend className="text-sm font-medium mb-2">阅读方式</legend>
             <div className="import-options">
               <label className="import-option">
                 <input
@@ -435,6 +458,20 @@ const Dashboard = () => {
                 <BookOpen size={18} />
                 简化英文
               </label>
+              <label className="import-option import-option-wide">
+                <input
+                  type="radio"
+                  name="reading-result"
+                  checked={mode === "gloss"}
+                  onChange={() => setMode("gloss")}
+                  disabled={uploadProgress !== null || urlLoading}
+                />
+                <MousePointerClick size={18} />
+                <span className="import-option-copy">
+                  <strong>原文点读</strong>
+                  <small>在原文上点词、术语或句式，释义已经准备好，点开就能看。</small>
+                </span>
+              </label>
             </div>
           </fieldset>
           <Tabs value={inputMode} onValueChange={(value) => setInputMode(value as "file" | "url")}>
@@ -451,8 +488,13 @@ const Dashboard = () => {
               >
                 <Upload size={27} className="text-primary" />
                 <h3 className="font-medium">选择要阅读的 PDF</h3>
-                <p>也可拖拽到这里 · 最大 {MAX_FILE_SIZE_MB} MB</p>
-                <Button disabled={uploadProgress !== null} onClick={() => fileInputRef.current?.click()}>
+                <p>
+                  也可拖拽到这里 · 最大 {MAX_FILE_SIZE_MB} MB · {features.max_pages} 页
+                </p>
+                <Button
+                  disabled={!features.ai_available || uploadProgress !== null}
+                  onClick={() => fileInputRef.current?.click()}
+                >
                   {uploadProgress !== null ? <Loader2 className="animate-spin" /> : <FileText />}
                   {uploadProgress !== null ? "正在上传…" : "选择 PDF"}
                 </Button>
@@ -463,6 +505,7 @@ const Dashboard = () => {
                   hidden
                   onChange={handleUpload}
                   aria-label="上传 PDF"
+                  disabled={!features.ai_available}
                 />
                 {uploadProgress !== null && (
                   <div className="w-full space-y-2" role="status">
@@ -489,15 +532,16 @@ const Dashboard = () => {
                   placeholder="粘贴 arXiv、OpenReview 或 PDF 直链"
                   value={pdfUrl}
                   onChange={(e) => setPdfUrl(e.target.value)}
-                  disabled={urlLoading}
+                  disabled={!features.ai_available || urlLoading}
                 />
-                <Button type="submit" disabled={urlLoading || !pdfUrl.trim()}>
+                <Button type="submit" disabled={!features.ai_available || urlLoading || !pdfUrl.trim()}>
                   {urlLoading ? <Loader2 className="animate-spin" /> : <ArrowRight />}
                   {urlLoading ? "正在获取论文…" : "导入链接"}
                 </Button>
               </form>
             </TabsContent>
           </Tabs>
+          {mode !== "gloss" && (
           <details className="import-optional">
             <summary>可选设置</summary>
             <label>
@@ -514,6 +558,7 @@ const Dashboard = () => {
               </span>
             </label>
           </details>
+          )}
           <p className="text-xs text-muted-foreground">其他阅读版本可在阅读器中生成。关闭面板不会取消已提交的任务。</p>
         </DialogContent>
       </Dialog>
@@ -535,7 +580,7 @@ const Dashboard = () => {
               开始读懂。
             </h2>
             <p>保留完整正文、图表和公式，按需要切换阅读版本。遇到疑问就地提问，理解留在批注里。</p>
-            <Button onClick={() => setImportOpen(true)}>
+            <Button disabled={!features.ai_available} onClick={() => setImportOpen(true)}>
               <Plus />
               导入第一篇论文
             </Button>
@@ -647,7 +692,9 @@ const Dashboard = () => {
                             >
                               {getStatusIcon(task.status)}
                               {task.status === "completed"
-                                ? `${task.mode === "simplify" ? "简化英文" : "中文译文"}可读`
+                                ? task.mode === "gloss"
+                                  ? "原文点读可用"
+                                  : `${resultLabel(task.mode)}可读`
                                 : getStatusLabel(task.status)}
                             </span>
                             <span>{new Date(task.created_at).toLocaleDateString()}</span>

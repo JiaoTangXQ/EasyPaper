@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useFeatures } from "@/lib/features";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,6 +68,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const PaperDetail = () => {
+  const features = useFeatures();
   const { paperId } = useParams<{ paperId: string }>();
   const navigate = useNavigate();
   const [paper, setPaper] = useState<PaperKnowledge | null>(null);
@@ -259,11 +261,15 @@ const PaperDetail = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled={obsidianSyncing} onSelect={() => void handleSyncObsidian()}>
-                {obsidianSyncing ? "正在同步…" : "同步到 Obsidian"}
-              </DropdownMenuItem>
+              {features.local_sync && (
+                <DropdownMenuItem disabled={obsidianSyncing} onSelect={() => void handleSyncObsidian()}>
+                  {obsidianSyncing ? "正在同步…" : "同步到 Obsidian"}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => void handleExport()}>知识备份 · JSON</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => navigate("/settings")}>配置 Obsidian 连接</DropdownMenuItem>
+              {features.local_sync && (
+                <DropdownMenuItem onSelect={() => navigate("/settings")}>配置 Obsidian 连接</DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

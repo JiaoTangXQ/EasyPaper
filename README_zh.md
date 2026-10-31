@@ -1,5 +1,7 @@
 # EasyPaper
 
+服务器多人部署请使用 [阿里云部署指南](docs/DEPLOYMENT.md)，不要直接使用本地开发配置。
+
 **把论文变成带得走的知识。**
 
 EasyPaper 是一个可本地部署的 Web 应用，帮助你阅读、理解并留住英文学术论文中的知识。上传一个 PDF 或粘贴论文链接 — 获取翻译或简化版本（排版完整保留）、AI 重点高亮，以及可导出到任何平台的便携知识库。
@@ -201,7 +203,7 @@ docker compose up --build
 
 ### 方式二：本地开发
 
-**环境要求：** Python 3.11+、Node.js 18+（推荐 Node 20）、一个 OpenAI 兼容的 LLM API Key
+**环境要求：** Python 3.11+、Node.js 22.12+、uv 0.12.13、一个 OpenAI 兼容的 LLM API Key
 
 **启动后端：**
 
@@ -209,7 +211,7 @@ docker compose up --build
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip sync --python .venv/bin/python requirements-dev.lock
 
 cp config/config.example.yaml config/config.yaml
 # 编辑 config.yaml — 填入你的 API Key
@@ -321,7 +323,7 @@ curl -X POST http://127.0.0.1:8000/api/agent/v1/translate \
 | 后端 | FastAPI, PyMuPDF, pdf2zh (PDFMathTranslate), httpx |
 | 前端 | React 18, TypeScript, Vite, Tailwind CSS, Radix UI |
 | 数据库 | SQLite（SQLModel） |
-| 认证 | JWT (python-jose), bcrypt, OAuth2 bearer |
+| 认证 | JWT (PyJWT), bcrypt, OAuth2 bearer |
 | AI/LLM | 任意 OpenAI 兼容 API（可配置） |
 | 工程化 | Docker Compose, GitHub Actions, ruff, ESLint |
 

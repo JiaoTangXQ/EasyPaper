@@ -17,7 +17,6 @@ export default function GlossLayer({
   spans: GlossSpan[];
 }) {
   const spansRef = useRef(spans);
-  spansRef.current = spans;
   const pages = useRef(new Map<number, Promise<TextPage>>());
   const placeRef = useRef<Place | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
@@ -25,13 +24,22 @@ export default function GlossLayer({
   const [marks, setMarks] = useState<Box[]>([]);
   const [cardBox, setCardBox] = useState({ width: 300, height: 120 });
   const cardRef = useRef<HTMLElement>(null);
-  placeRef.current = place;
 
+  useEffect(() => {
+    spansRef.current = spans;
+  }, [spans]);
+  useEffect(() => {
+    placeRef.current = place;
+  }, [place]);
+
+  /* The transient popup must close when a new prepared span set arrives. */
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setPlace(null);
     setCardPoint(null);
     setMarks([]);
   }, [spans]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     const card = cardRef.current;

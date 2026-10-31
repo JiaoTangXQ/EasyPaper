@@ -1,0 +1,29 @@
+# Secrets come from .env; never put them in this file.
+llm:
+  provider: api
+processing:
+  max_pages: 150
+  max_upload_mb: 50
+  max_concurrent: 1
+  translation_threads: 1
+  max_pending: 3
+  max_pending_per_user: 1
+  preview_html: false
+security:
+  allow_registration: false
+  local_sync_enabled: false
+  cors_origins: [] # Frontend and API share one origin.
+  max_users: 5
+  daily_imports: 20
+  daily_operations: 300
+  min_free_disk_mb: 2048
+agent:
+  enabled: false
+  api_keys: []
+storage:
+  cleanup_minutes: 30
+  temp_dir: /app/tmp
+  library_dir: /app/reader-library
+logging:
+  level: INFO
+  file: /app/logs/app.log

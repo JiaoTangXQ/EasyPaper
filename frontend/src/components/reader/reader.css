@@ -215,11 +215,17 @@
 .reader-inline-error {
   position: absolute;
   z-index: 40;
-  inset: 0 0 auto;
-  padding: 12px;
-  background: #fff0ec;
+  right: 16px;
+  bottom: 16px;
+  max-width: min(320px, calc(100% - 32px));
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 248, 245, 0.96);
   color: #973b24;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(40, 20, 10, 0.14);
+  pointer-events: none;
 }
 .reader-sidepanel {
   overflow: hidden;

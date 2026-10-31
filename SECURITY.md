@@ -20,3 +20,19 @@ git grep -n -I -E 'sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,}|BEGIN (RSA|OPENS
 ```
 
 The first command must not show a local credential file. The second and third commands should return no results for a clean public release. If a real secret has ever been committed, rotate it and rewrite the affected Git history; adding an ignore rule does not remove an old secret from GitHub clones or forks.
+
+## Server deployment
+
+Use [the server deployment guide](docs/DEPLOYMENT.md). Production mode forces
+registration, local Obsidian filesystem access and shared Agent/MCP access off.
+Passwords reset/disable/enable operations revoke previous sessions. Daily request
+quotas are persistent; burst and queue limits require one backend process.
+
+The backend is unprivileged with a read-only root filesystem; persistent PDF data
+and the database must be backed up together. Supply a separate AI key with a
+provider-side budget, and maintain independent, encrypted backups. Login tokens
+are bearer tokens in browser storage, so frontend XSS prevention and HTTPS remain
+essential. No configuration can guarantee immunity from attacks or dependency bugs.
+
+Dependency lock files intentionally exclude pdf2zh's unused Gradio UI and override
+its outdated PDF parser constraint. Do not install the upstream requirements alone.

@@ -48,7 +48,7 @@ def reader(tmp_path):
         both.insert_pdf(zh)
         dual.write_bytes(both.tobytes())
     config = SimpleNamespace(
-        processing=SimpleNamespace(max_concurrent=1),
+        processing=SimpleNamespace(max_concurrent=1, max_pending=8, max_pending_per_user=2),
         llm=LLMConfig(api_key="test"),
         storage=SimpleNamespace(temp_dir=str(tmp_path / "library")),
     )
@@ -312,8 +312,11 @@ def test_polling_an_open_reader_imports_ai_highlights_without_reopening_task(rea
     assert saved(reader)["alignment_status"] == "matched"
 
 
-def test_import_scheduler_does_not_serialize_every_highlight(reader):
+@pytest.mark.parametrize("capacity", [3, 12])
+def test_import_scheduler_does_not_serialize_every_highlight(reader, capacity):
     from fastapi import BackgroundTasks
+
+    reader.reading.config.processing.max_pending = capacity
 
     async def scenario():
         started, release = [], asyncio.Event()
@@ -334,7 +337,7 @@ def test_import_scheduler_does_not_serialize_every_highlight(reader):
         finally:
             release.set()
             await running
-        assert len(started) == 10
+        assert len(started) == min(10, capacity)
         assert not reader.service._scheduled
 
     asyncio.run(scenario())
@@ -2863,6 +2866,22 @@ def test_server_recovers_after_browser_closes_and_service_restarts(reader):
     with Session(reader.engine) as session:
         assert session.get(ReaderAnnotation, "annotation1").alignment_status == "matched"
         assert session.get(ReaderAlignmentRetry, "annotation1") is None
+
+
+def test_recovery_resumes_persisted_annotation_after_queue_capacity_returns(reader):
+    reader.reading.config.processing.max_pending = 1
+    reader.service._scheduled.add("busy-annotation")
+    assert reader.client.put(url(reader), json=annotation_body(reader)).status_code == 200
+    assert saved(reader)["alignment_status"] == "pending"
+    with Session(reader.engine) as session:
+        row = session.get(ReaderAnnotation, "annotation1")
+        row.updated_at = datetime.utcnow() - timedelta(seconds=61)
+        session.add(row)
+        session.commit()
+    reader.service._scheduled.clear()
+    asyncio.run(reader.service.recovery.run_once())
+    assert saved(reader)["alignment_status"] == "matched"
+    assert not reader.service._scheduled
 
 
 def test_recovery_budget_does_not_repeat_forever_or_block_other_documents(reader):

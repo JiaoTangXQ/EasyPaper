@@ -26,6 +26,7 @@ from .core.logger import setup_logging
 from .mcp.server import create_mcp_server
 from .services.ai_client import AIClient
 from .services.document_processor import DocumentProcessor
+from .services.job_queue import JobQueue
 from .services.knowledge_extractor import KnowledgeExtractor
 from .services.reading_service import ReadingService
 from .services.task_manager import TaskManager
@@ -39,6 +40,7 @@ setup_logging()
 config = get_config()
 ai_client = AIClient(config.llm)
 task_manager = TaskManager(ttl_minutes=config.storage.cleanup_minutes)
+job_queue = JobQueue(config.processing)
 processor = DocumentProcessor(config=config, task_manager=task_manager, ai_client=ai_client)
 knowledge_extractor = KnowledgeExtractor(
     api_key=config.llm.api_key,
@@ -56,6 +58,7 @@ execution_service = TranslationExecutionService(
 )
 reading_service = ReadingService(config, engine, ai_client=ai_client)
 reading_service.reader_processor = processor
+reading_service.job_queue = job_queue
 artifact_service = TranslationArtifactService(task_manager=task_manager)
 mcp_server = create_mcp_server(
     draft_service=draft_service,
@@ -65,7 +68,13 @@ mcp_server = create_mcp_server(
 )
 
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="PDF Simplifier", version="1.0.0")
+app = FastAPI(
+    title="EasyPaper",
+    version="1.0.0",
+    docs_url=None if not config.security.allow_registration else "/docs",
+    redoc_url=None,
+    openapi_url=None if not config.security.allow_registration else "/openapi.json",
+)
 app.state.limiter = limiter
 
 
@@ -87,6 +96,11 @@ app.add_middleware(
     api_keys=config.agent.api_keys,
 )
 
+if not config.agent.enabled:
+    from .core.server_guard import ServerGuard
+
+    app.add_middleware(ServerGuard, config=config, engine=engine)
+
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(
     create_agent_router(
@@ -95,8 +109,8 @@ app.include_router(
         artifact_service=artifact_service,
     )
 )
-app.include_router(create_router(task_manager, processor, reading_service))
-app.include_router(create_knowledge_router(knowledge_extractor))
+app.include_router(create_router(task_manager, processor, reading_service, job_queue))
+app.include_router(create_knowledge_router(knowledge_extractor, job_queue))
 app.include_router(create_reading_router(reading_service))
 app.include_router(create_reader_router(reading_service))
 app.router.routes.extend(mcp_server.streamable_http_app().routes)

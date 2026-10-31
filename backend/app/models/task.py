@@ -35,7 +35,7 @@ class TaskResult(SQLModel):
 class Task(SQLModel, table=True):
     task_id: str = Field(primary_key=True)
     filename: str
-    mode: str = Field(default="translate")  # "translate" or "simplify"
+    mode: str = Field(default="translate")  # "translate", "simplify", or "gloss"
 
     # Progress fields
     status: TaskStatus = Field(default=TaskStatus.PENDING)

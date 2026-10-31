@@ -73,3 +73,30 @@ def test_save_obsidian_settings_and_sync_paper(monkeypatch, tmp_path: Path) -> N
     assert body["paper_note"] == "EasyPaper/Papers/Test_Paper.md"
     assert (tmp_path / "EasyPaper" / "Papers" / "Test_Paper.md").exists()
     assert (tmp_path / "EasyPaper" / "Entities" / "BERT_Model.md").exists()
+
+
+def test_server_mode_disables_directory_operations(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import get_current_user
+    from app.api.knowledge_routes import create_knowledge_router
+    from app.core.config import AppConfig
+    from app.models.user import User
+
+    config = AppConfig(llm={}, security={"local_sync_enabled": False})
+    monkeypatch.setattr("app.api.knowledge_routes.get_config", lambda: config)
+    app = FastAPI()
+    app.include_router(create_knowledge_router(SimpleNamespace()))
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, email="user@example.com", hashed_password="x")
+    with TestClient(app) as client:
+        for path in ["/api/knowledge/settings/obsidian", "/api/knowledge/settings/obsidian/vaults"]:
+            assert client.get(path).status_code == 403
+        for path in [
+            "/api/knowledge/settings/obsidian",
+            "/api/knowledge/settings/obsidian/test",
+            "/api/knowledge/papers/any/sync/obsidian",
+        ]:
+            assert client.post(path, json={"vault_path": "/app", "root_folder": "test"}).status_code == 403

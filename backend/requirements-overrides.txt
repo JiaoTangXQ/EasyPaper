@@ -1,0 +1,3 @@
+# Keep pdf2zh 1.9.11's pinned pdfminer-six version. Its custom interpreter
+# still relies on the color-state fields from that parser API.
+pillow>=12.3.0

@@ -58,3 +58,7 @@ backend/models/
 # Test / debug files
 reproduce_issue.py
 *.pdf
+
+.backup.lock
+backups/
+*.dump

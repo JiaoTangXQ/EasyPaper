@@ -20,23 +20,23 @@ def test_register_blocked_when_disabled(client, monkeypatch):
     monkeypatch.setattr(auth_module, "get_config", lambda: _Cfg())
     response = client.post(
         "/api/auth/register",
-        json={"email": "blocked@test.com", "password": "secret123"},
+        json={"email": "blocked@test.com", "password": "test-password-123"},
     )
     assert response.status_code == 403
 
 
 def test_create_user_cli_creates_account(session):
-    user = create_user("admin@test.com", "secret123", session=session)
+    user = create_user("admin@test.com", "test-password-123", session=session)
     assert user.id is not None
     assert user.email == "admin@test.com"
     # Stored password must be hashed, never plaintext.
-    assert user.hashed_password != "secret123"
+    assert user.hashed_password != "test-password-123"
 
 
 def test_create_user_cli_rejects_duplicate(session):
-    create_user("dup@test.com", "secret123", session=session)
+    create_user("dup@test.com", "test-password-123", session=session)
     with pytest.raises(ValueError):
-        create_user("dup@test.com", "secret123", session=session)
+        create_user("dup@test.com", "test-password-123", session=session)
     # Only one row exists.
     from sqlmodel import select
 

@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from ..models.knowledge import PaperKnowledge, UserAnnotation
 from ..models.reading import ReadingAid, ReadingDocument, ReadingState
-from ..models.task import Task, TaskTitleTranslation
+from ..models.task import Task, TaskStatus, TaskTitleTranslation
 from .ai_client import AIClient, AIError
 from .document_parser import evidence_for, parse_document, render_source, tagged_text, validate_evidence
 
@@ -148,7 +148,7 @@ class ReadingService:
             "knowledge_error": paper.extraction_error,
             "aids": {a.block_id: json.loads(a.content_json) for a in aids},
             "highlights": {"stats": highlight_stats, "status": task.highlight_status, "sentences": highlight_sentences},
-            "state": self.state_dict(state),
+            "state": self.state_dict(state, "gloss" if task.mode == "gloss" else "chinese"),
             "notes": [
                 {
                     "id": n.id,
@@ -162,16 +162,17 @@ class ReadingService:
             "pdf_status": task.status,
             "pdf_message": task.message,
             "percent": task.percent,
-            "has_result": bool(task.result_pdf_path and Path(task.result_pdf_path).is_file()),
+            "has_result": (task.mode == "gloss" and task.status == TaskStatus.COMPLETED)
+            or bool(task.result_pdf_path and Path(task.result_pdf_path).is_file()),
             "has_dual": bool(task.result_dual_pdf_path and Path(task.result_dual_pdf_path).is_file()),
         }
 
     @staticmethod
-    def state_dict(state: ReadingState | None) -> dict:
+    def state_dict(state: ReadingState | None, default_mode: str = "chinese") -> dict:
         return {
             "block_id": state.block_id if state else "",
             "offset": state.offset if state else 0,
-            "mode": state.mode if state else "chinese",
+            "mode": state.mode if state else default_mode,
             "font_size": state.font_size if state else 18,
             "understood": json.loads(state.understood_json) if state else [],
             "bookmarked_terms": json.loads(state.bookmarked_terms_json) if state else [],
@@ -207,7 +208,7 @@ class ReadingService:
                             ),
                         )
                 except AIError as exc:
-                    if self.ai.config.provider == "codex" or not exc.retryable or attempt == 2:
+                    if self.ai.config.uses_cli or not exc.retryable or attempt == 2:
                         raise
                     await asyncio.sleep(2**attempt)
         raise RuntimeError("模型请求失败。")

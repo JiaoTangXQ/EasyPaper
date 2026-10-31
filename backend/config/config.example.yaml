@@ -1,5 +1,5 @@
 llm:
-  # api: OpenAI-compatible HTTP service; codex: local Codex CLI / ChatGPT login.
+  # api: OpenAI-compatible HTTP service; codex: local Codex CLI; cursor: local cursor-p CLI.
   # EASYPAPER_AI_PROVIDER overrides this value. Restart the backend after switching.
   provider: "api"
   api_key: "YOUR_API_KEY"
@@ -12,6 +12,11 @@ llm:
     reasoning_effort: "low"
     timeout_seconds: 180
     max_concurrent: 2
+  cursor:
+    executable: "cursor-p" # Or the absolute path of the isolated Cursor CLI.
+    model: "grok-4.7-high-fast"
+    timeout_seconds: 180
+    max_concurrent: 1
 processing:
   max_pages: 100
   max_upload_mb: 50
@@ -26,7 +31,7 @@ security:
     - "http://localhost:5173"
     - "http://127.0.0.1:5173"
   # Public deployments: set to false and create accounts with
-  #   python -m app.cli create-user <email> <password>
+  #   python -m app.cli create-user <email>  # prompts for a password
   allow_registration: true
 agent:
   api_keys:

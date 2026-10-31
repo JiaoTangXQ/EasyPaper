@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlmodel import Session, select
+
+logger = logging.getLogger(__name__)
 
 from ..core.config import get_config
 from ..core.db import engine
@@ -45,16 +49,20 @@ class TaskManager:
     def update_progress(
         self, task_id: str, status: TaskStatus, percent: int, message: str, error: str | None = None
     ) -> None:
-        with Session(engine) as session:
-            task = session.get(Task, task_id)
-            if not task or task.status == TaskStatus.CANCELLED:
-                return
-            task.status = status
-            task.percent = percent
-            task.message = message
-            task.error = error
-            session.add(task)
-            session.commit()
+        try:
+            with Session(engine) as session:
+                task = session.get(Task, task_id)
+                if not task or task.status == TaskStatus.CANCELLED:
+                    return
+                task.status = status
+                task.percent = percent
+                task.message = message
+                task.error = error
+                session.add(task)
+                session.commit()
+        except PoolTimeout:
+            # A busy pool must not abort a running PDF job. The next progress write can catch up.
+            logger.warning("Skipped progress update because the database pool is busy: %s", message)
 
     def reading_overview(self, user_id: int) -> dict:
         import json

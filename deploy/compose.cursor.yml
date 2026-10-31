@@ -1,0 +1,22 @@
+# Add explicitly after docker-compose.prod.yml. The API key stays in the private
+# backend home volume; this file does not contain it.
+services:
+  backend:
+    environment:
+      EASYPAPER_AI_PROVIDER: cursor
+      EASYPAPER_CURSOR_EXECUTABLE: /opt/cursor-p/bin/cursor-p
+      EASYPAPER_CURSOR_MODEL: "grok-4.7-high-fast"
+      EASYPAPER_CURSOR_MAX_CONCURRENT: "1"
+      EASYPAPER_CURSOR_TIMEOUT_SECONDS: "180"
+      EASYPAPER_DOWNLOAD_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      CURSOR_P_KEY_FILE: /home/app/.config/cursor-p/api-key
+      CURSOR_CONFIG_DIR: /home/app/.config/cursor-p
+      CURSOR_DATA_DIR: /home/app/.local/share/cursor-p/data
+      NODE_COMPILE_CACHE: /home/app/.cache/cursor-p-compile
+    volumes:
+      - type: bind
+        source: /opt/cursor-p
+        target: /opt/cursor-p
+        read_only: true
+        bind:
+          create_host_path: false

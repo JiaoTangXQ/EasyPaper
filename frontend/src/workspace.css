@@ -439,6 +439,21 @@ button.paper-title:hover {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+.import-option-wide {
+  grid-column: 1 / -1;
+}
+.import-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.import-option-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
 .import-option {
   display: flex;
   align-items: center;

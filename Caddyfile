@@ -1,18 +1,42 @@
-# Auto-HTTPS reverse proxy. DOMAIN is injected from the compose .env file.
-# Caddy obtains and renews Let's Encrypt certificates automatically as long as
-# DOMAIN points at this server and ports 80/443 are reachable from the internet.
+{
+	servers {
+		trusted_proxies static {$CADDY_TRUSTED_PROXIES:127.0.0.1/32}
+		trusted_proxies_strict
+		timeouts {
+			read_header 10s
+			read_body 2m
+			idle 2m
+		}
+	}
+}
 
 {$DOMAIN} {
 	encode gzip
-
-	# API, MCP and health checks go straight to the backend.
-	@backend path /api/* /mcp /mcp/* /health
-	handle @backend {
-		reverse_proxy backend:8000
+	request_body {
+		max_size 135266304
 	}
-
-	# Everything else is the React SPA served by the frontend (nginx) container.
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob:; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+	# Shared agent credentials and local server directories are not public APIs.
+	@disabled path /mcp /mcp/* /api/agent/* /docs /redoc /openapi.json
+	handle @disabled {
+		respond 404
+	}
+	@backend path /api/* /health
+	handle @backend {
+		header Cache-Control "no-store"
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
 	handle {
-		reverse_proxy frontend:80
+		reverse_proxy frontend:8080
 	}
 }

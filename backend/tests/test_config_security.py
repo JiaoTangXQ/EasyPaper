@@ -32,5 +32,5 @@ def test_default_agent_key_raises_in_production() -> None:
 
 
 def test_strong_secrets_pass_in_production() -> None:
-    cfg = _config(secret="a-strong-secret", agent_keys=["a-strong-agent-key"])
+    cfg = _config(secret="a" * 64, agent_keys=["b" * 64])
     validate_security(cfg, "production")  # must not raise

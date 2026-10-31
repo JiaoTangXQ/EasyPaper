@@ -9,8 +9,10 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
+import { useFeatures } from "@/lib/features";
 
 export default function Register() {
+  const features = useFeatures();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,6 +31,22 @@ export default function Register() {
       setLoading(false);
     }
   };
+
+  if (!features.registration)
+    return (
+      <AuthLayout>
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>账号由管理员开通</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Link to="/login" className="underline">
+              返回登录
+            </Link>
+          </CardContent>
+        </Card>
+      </AuthLayout>
+    );
 
   return (
     <AuthLayout>
@@ -56,6 +74,7 @@ export default function Register() {
               <Input
                 id="password"
                 autoComplete="new-password"
+                minLength={12}
                 type="password"
                 required
                 value={password}

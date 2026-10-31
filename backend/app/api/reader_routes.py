@@ -15,6 +15,7 @@ from sqlmodel import Session
 
 from ..models.task import Task
 from ..models.user import User
+from ..services.job_queue import JobQueue
 from ..services.reader_backup import MAX_ARCHIVE_BYTES, restore_archive
 from ..services.reader_geometry import public_units
 from ..services.synced_reader import SyncedReader
@@ -38,6 +39,7 @@ class AnnotationLink(BaseModel):
 
 def create_reader_router(reading):
     router = APIRouter(prefix="/api/reader", tags=["reader-annotations"])
+    queue = getattr(reading, "job_queue", None) or JobQueue(reading.config.processing)
     service = SyncedReader(reading)
     reading.synced_reader = service
 
@@ -94,8 +96,9 @@ def create_reader_router(reading):
         user: User = Depends(get_current_user),
     ):
         service.owned(document_id, user.id)
-        if service.request_build(document_id, kind):
-            background.add_task(service.build, document_id, kind)
+        with queue.reserve(user.id) as start:
+            if service.request_build(document_id, kind):
+                start(service.build(document_id, kind), background=background)
         return {"status": "running"}
 
     @router.put("/documents/{document_id}/annotations/{annotation_id}")

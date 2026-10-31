@@ -1,0 +1,20 @@
+# Add explicitly after docker-compose.prod.yml. Credentials are provisioned into
+# the existing private backend-cache volume; no host home or Docker socket mount.
+services:
+  backend:
+    environment:
+      EASYPAPER_AI_PROVIDER: codex
+      EASYPAPER_CODEX_EXECUTABLE: /opt/codex/bin/codex
+      EASYPAPER_CODEX_MODEL: ${CODEX_MODEL:-}
+      EASYPAPER_CODEX_REASONING_EFFORT: low
+      EASYPAPER_CODEX_MAX_CONCURRENT: "1"
+      EASYPAPER_CODEX_TIMEOUT_SECONDS: "180"
+      EASYPAPER_DOWNLOAD_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      CODEX_HOME: /home/app/.codex
+    volumes:
+      - type: bind
+        source: ${CODEX_RUNTIME_DIR:?set the directory containing the native Codex bin and resources}
+        target: /opt/codex
+        read_only: true
+        bind:
+          create_host_path: false

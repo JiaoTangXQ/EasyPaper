@@ -12,3 +12,10 @@ config/*.secret.yaml
 .codex
 .codez
 .git
+
+.venv-dev
+backend
+reader-library
+.pytest_cache
+.ruff_cache
+tests

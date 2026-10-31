@@ -1,33 +1,26 @@
-"""Administrative command-line tools.
-
-Usage:
-    python -m app.cli create-user <email> <password>
-
-Used to provision accounts when self-service registration is disabled
-(security.allow_registration: false).
-"""
+"""Offline account administration. Passwords are read with getpass, never argv."""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 
+from email_validator import validate_email
 from sqlmodel import Session, select
 
+from .core.config import get_config
 from .core.security import get_password_hash
-from .models.user import User
+from .models.user import User, validate_password
 
 
 def create_user(email: str, password: str, *, session: Session) -> User:
-    """Create an active user. Raises ValueError if the email already exists."""
-    email = email.strip().lower()
-    if not email or not password:
-        raise ValueError("email and password are required")
-
-    existing = session.exec(select(User).where(User.email == email)).first()
-    if existing:
+    email = validate_email(email.strip(), check_deliverability=False).normalized.lower()
+    validate_password(password)
+    if session.exec(select(User).where(User.email == email)).first():
         raise ValueError(f"A user with email {email!r} already exists")
-
+    if len(session.exec(select(User)).all()) >= get_config().security.max_users:
+        raise ValueError("账号数量达到上限，请先调整 security.max_users")
     user = User(email=email, hashed_password=get_password_hash(password), is_active=True)
     session.add(user)
     session.commit()
@@ -35,32 +28,52 @@ def create_user(email: str, password: str, *, session: Session) -> User:
     return user
 
 
-def _cmd_create_user(args: argparse.Namespace) -> int:
-    # Imported lazily so importing this module for tests doesn't touch the DB engine.
-    from .core.db import engine, init_db
+def change_user(email, action, *, session, password=None):
+    user = session.exec(select(User).where(User.email == email.strip().lower())).first()
+    if not user:
+        raise ValueError("账号不存在")
+    if action == "reset-password":
+        user.hashed_password = get_password_hash(validate_password(password))
+    else:
+        user.is_active = action == "enable-user"
+    user.token_version += 1
+    session.add(user)
+    session.commit()
 
-    init_db()
-    with Session(engine) as session:
-        try:
-            user = create_user(args.email, args.password, session=session)
-        except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-    print(f"created user id={user.id} email={user.email}")
-    return 0
+
+def read_password():
+    password = getpass.getpass("新密码（至少 12 个字符）: ")
+    if password != getpass.getpass("再次输入: "):
+        raise ValueError("两次密码不一致")
+    return validate_password(password)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="EasyPaper admin tools")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    p_create = sub.add_parser("create-user", help="Create a new user account")
-    p_create.add_argument("email")
-    p_create.add_argument("password")
-    p_create.set_defaults(func=_cmd_create_user)
-
+    for action in ("create-user", "reset-password", "disable-user", "enable-user"):
+        sub.add_parser(action).add_argument("email")
+    sub.add_parser("list-users")
     args = parser.parse_args(argv)
-    return args.func(args)
+    from .core.db import engine, init_db
+
+    init_db()
+    try:
+        with Session(engine) as session:
+            if args.command == "list-users":
+                for user in session.exec(select(User)).all():
+                    print(f"{user.id}\t{user.email}\t{'active' if user.is_active else 'disabled'}")
+            elif args.command == "create-user":
+                user = create_user(args.email, read_password(), session=session)
+                print(f"created user id={user.id} email={user.email}")
+            else:
+                password = read_password() if args.command == "reset-password" else None
+                change_user(args.email, args.command, session=session, password=password)
+                print("账号已更新，旧登录已失效")
+    except (ValueError, EOFError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -382,7 +382,7 @@ class HighlightService:
             try:
                 return await self._do_classify_candidates(candidates)
             except Exception as exc:
-                if isinstance(exc, AIError) and (self.ai.config.provider == "codex" or not exc.retryable):
+                if isinstance(exc, AIError) and (self.ai.config.uses_cli or not exc.retryable):
                     raise
                 if attempt == max_retries - 1:
                     logger.error("Candidate classification failed: %s", exc)

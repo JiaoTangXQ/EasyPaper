@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
 
+from .ai_client import AIError
 from .reader_geometry import normalized
+
+# Keep each request below the model's timeout while amortizing Cursor startup
+# and network latency across more sentences. Coverage validation still splits
+# an individual batch when the model cannot return a complete tiling.
+GLOSS_MODEL = "grok-4.7-low-fast"
+GLOSS_BATCH_UNITS = 12
+GLOSS_BATCH_CHARS = 900
+GLOSS_CALL_TIMEOUT = 180
+GLOSS_CONCURRENCY = 2
 
 LABELS = {
     "word": "单词",
@@ -33,36 +44,107 @@ class GlossCoverageError(ValueError):
     pass
 
 
-def tile_sentence(source: str, spans: list, unit: dict | None = None, units: list | None = None) -> list[dict]:
+def tile_sentence(
+    source: str,
+    spans: list,
+    unit: dict | None = None,
+    units: list | None = None,
+    page_units_by_page: dict | None = None,
+) -> list[dict]:
     """Partition one sentence. Every non-space character belongs to exactly one span."""
     if not isinstance(spans, list) or not spans:
         raise GlossCoverageError("没有切块")
+    if page_units_by_page is None and unit is not None and units is not None:
+        page_units_by_page = _group_page_units(units)
     cursor = 0
     produced = []
     for raw in spans:
         if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not normalized(raw["text"]):
             raise GlossCoverageError("切块没有可用的原文")
         begin, end = _consume(source, cursor, raw["text"])
-        produced.append(_present(source[begin:end].strip(), raw, begin, end, unit, units))
+        produced.append(
+            _present(source[begin:end].strip(), raw, begin, end, unit, page_units_by_page)
+        )
         cursor = end
     if normalized(source[cursor:]):
         raise GlossCoverageError("句子还有没覆盖的内容")
     return produced
 
 
-async def prepare_gloss(ai, units: list[dict]) -> list[dict]:
-    """Ask the model to cover every sentence, retrying a sentence once if its tiling fails."""
-    ready = []
-    for batch in _batches(units):
-        try:
-            ready.extend(await _cover(ai, batch, units))
-        except GlossCoverageError:
-            for unit in batch:
-                try:
-                    ready.extend(await _cover(ai, [unit], units))
-                except GlossCoverageError:
-                    ready.extend(await _cover(ai, [unit], units))
+async def prepare_gloss(
+    ai, units: list[dict], on_progress=None, on_batch=None, skip_ids=None, concurrency: int = 1
+) -> list[dict]:
+    """Cover every sentence. A timed-out batch is split; a bad tiling is retried once."""
+    skip = set(skip_ids or ())
+    batches = [batch for batch in _batches(units) if any(unit.get("id") not in skip for unit in batch)]
+    page_units_by_page = _group_page_units(units)
+    total = len(batches)
+    if concurrency <= 1:
+        ready = []
+        for index, batch in enumerate(batches, start=1):
+            produced = await _finish_batch(ai, batch, units, skip, page_units_by_page)
+            ready.extend(produced)
+            if produced and on_batch:
+                on_batch(produced)
+            if on_progress:
+                on_progress(index, total)
+        return ready
+
+    slots = asyncio.Semaphore(concurrency)
+    lock = asyncio.Lock()
+    finished = 0
+
+    async def run(batch):
+        nonlocal finished
+        async with slots:
+            try:
+                produced = await _finish_batch(ai, batch, units, skip, page_units_by_page)
+            except Exception as exc:
+                return exc
+        async with lock:
+            if produced and on_batch:
+                on_batch(produced)
+            nonlocal_finished = finished + 1
+            finished = nonlocal_finished
+            if on_progress:
+                on_progress(finished, total)
+        return produced
+
+    outcomes = await asyncio.gather(*(run(batch) for batch in batches))
+    failed = next((item for item in outcomes if isinstance(item, Exception)), None)
+    ready = [span for item in outcomes if isinstance(item, list) for span in item]
+    if failed:
+        raise failed
     return ready
+
+
+async def _finish_batch(ai, batch, units, skip, page_units_by_page) -> list[dict]:
+    pending = [unit for unit in batch if unit.get("id") not in skip]
+    if not pending:
+        return []
+    return await _cover_batch(ai, pending, units, page_units_by_page)
+
+
+async def _cover_batch(ai, batch: list[dict], units: list[dict], page_units_by_page: dict) -> list[dict]:
+    try:
+        return await _cover(ai, batch, units, page_units_by_page)
+    except GlossCoverageError:
+        if len(batch) == 1:
+            try:
+                return await _cover(ai, batch, units, page_units_by_page)
+            except GlossCoverageError:
+                return await _fallback_unit(ai, batch[0], units, page_units_by_page)
+        covered = []
+        for unit in batch:
+            covered.extend(await _cover_batch(ai, [unit], units, page_units_by_page))
+        return covered
+    except AIError:
+        if len(batch) == 1:
+            return await _cover(ai, batch, units, page_units_by_page)
+        middle = len(batch) // 2
+        return await _cover_batch(ai, batch[:middle], units, page_units_by_page) + await _cover_batch(
+            ai, batch[middle:], units, page_units_by_page
+        )
 
 
 def _batches(units: list[dict]) -> list[list[dict]]:
@@ -71,22 +153,39 @@ def _batches(units: list[dict]) -> list[list[dict]]:
         text = unit.get("text") or ""
         if not normalized(text):
             continue
-        if current and (len(current) >= 6 or size + len(text) > 3500):
+        # Keep an unusually long sentence isolated. It already consumes most
+        # of the request budget, and mixing another sentence with it makes
+        # malformed tilings more likely without improving throughput.
+        if current and (
+            len(current) >= GLOSS_BATCH_UNITS
+            or size + len(text) > GLOSS_BATCH_CHARS
+            or len(text) > GLOSS_BATCH_CHARS // 2
+        ):
             batches.append(current)
             current, size = [], 0
         current.append(unit)
         size += len(text)
+        if len(text) > GLOSS_BATCH_CHARS // 2:
+            batches.append(current)
+            current, size = [], 0
     if current:
         batches.append(current)
     return batches
 
 
-async def _cover(ai, batch: list[dict], units: list[dict]) -> list[dict]:
+async def _cover(ai, batch: list[dict], units: list[dict], page_units_by_page: dict) -> list[dict]:
     user = json.dumps(
         {"sentences": [{"id": unit["id"], "text": unit["text"]} for unit in batch]},
         ensure_ascii=False,
     )
-    result = await ai.complete_json(GLOSS_SYSTEM, user, max_tokens=8192)
+    result = await ai.complete_json(
+        GLOSS_SYSTEM,
+        user,
+        max_tokens=8192,
+        timeout_seconds=GLOSS_CALL_TIMEOUT,
+        model=GLOSS_MODEL,
+        bypass_slot=True,
+    )
     sentences = result.get("sentences") if isinstance(result, dict) else None
     if not isinstance(sentences, list):
         raise GlossCoverageError("返回里没有句子")
@@ -98,8 +197,47 @@ async def _cover(ai, batch: list[dict], units: list[dict]) -> list[dict]:
         raise GlossCoverageError("返回的句子和原文对不上")
     covered = []
     for unit in batch:
-        covered.extend(tile_sentence(unit["text"], by_id[unit["id"]].get("spans") or [], unit, units))
+        covered.extend(
+            tile_sentence(
+                unit["text"],
+                by_id[unit["id"]].get("spans") or [],
+                unit,
+                units,
+                page_units_by_page,
+            )
+        )
     return covered
+
+
+async def _fallback_unit(ai, unit: dict, units: list[dict], page_units_by_page: dict) -> list[dict]:
+    """Keep the sentence clickable when the model cannot tile it."""
+    zh = ""
+    try:
+        result = await ai.complete_json(
+            "把英文原文译成一句简体中文，保留术语和缩写。只返回 JSON：{\"zh\":\"中文\"}。",
+            json.dumps({"text": unit["text"]}, ensure_ascii=False),
+            max_tokens=512,
+            timeout_seconds=60,
+            model=GLOSS_MODEL,
+            bypass_slot=True,
+        )
+        if isinstance(result, dict) and isinstance(result.get("zh"), str):
+            zh = result["zh"].strip()
+    except AIError:
+        zh = ""
+    if not zh:
+        zh = "这句按整句理解"
+    return tile_sentence(
+        unit["text"],
+        [{"text": unit["text"], "category": "pattern", "zh": zh, "role": "整句理解"}],
+        unit,
+        units,
+        page_units_by_page,
+    )
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*", text)
 
 
 def _consume(source: str, start: int, piece: str) -> tuple[int, int]:
@@ -119,27 +257,36 @@ def _consume(source: str, start: int, piece: str) -> tuple[int, int]:
     return begin, index
 
 
-def _present(text: str, raw: dict, begin: int, end: int, unit: dict | None, units: list | None) -> dict:
+def _present(
+    text: str,
+    raw: dict,
+    begin: int,
+    end: int,
+    unit: dict | None,
+    page_units_by_page: dict | None,
+) -> dict:
     category = raw.get("category")
     if category not in LABELS:
-        raise GlossCoverageError("有无法归类的块")
+        category = "term"
     zh = raw.get("zh")
     if not isinstance(zh, str) or not zh.strip():
         raise GlossCoverageError("块缺少中文解释")
+    if category == "word" and len(_words(text)) > 1:
+        # A phrase mislabeled as one word is still a useful click target.
+        category = "term"
     if category == "word":
-        if len(re.findall(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*", text)) > 1:
-            raise GlossCoverageError("单词块里有多个词")
         en = raw.get("en")
         if not isinstance(en, str) or not en.strip():
-            raise GlossCoverageError("单词缺少英文释义")
+            en = "见中文释义"
         extra = {"en": en.strip()}
     else:
         role = raw.get("role")
         if not isinstance(role, str) or not role.strip():
-            raise GlossCoverageError("块缺少它在句中的作用")
+            role = "这几个词作为一个整体"
         extra = {"role": role.strip()}
     span = {
         "id": hashlib.sha256(f"{unit['id'] if unit else text}:{begin}:{text}".encode()).hexdigest()[:16],
+        "unit_id": unit["id"] if unit else "",
         "text": text,
         "category": category,
         "label": LABELS[category],
@@ -148,14 +295,16 @@ def _present(text: str, raw: dict, begin: int, end: int, unit: dict | None, unit
     }
     if unit is not None:
         span["page"] = unit["page"]
-        span["anchor"] = _anchor(unit, begin, end, units or [])
+        span["anchor"] = _anchor(unit, begin, end, page_units_by_page or {})
     return span
 
 
-def _anchor(unit: dict, begin: int, end: int, units: list) -> dict:
+def _anchor(unit: dict, begin: int, end: int, page_units_by_page: dict) -> dict:
     before = normalized(unit["text"][:begin])
     after = normalized(unit["text"][end:])
-    page_units = [item for item in units if item.get("page") == unit["page"]]
+    page_units = page_units_by_page.get(unit.get("page"))
+    if page_units is None:
+        page_units = [unit]
     position = next((index for index, item in enumerate(page_units) if item.get("id") == unit["id"]), None)
     if position is not None:
         before = "".join(normalized(item["text"]) for item in page_units[:position]) + before
@@ -166,3 +315,10 @@ def _anchor(unit: dict, begin: int, end: int, units: list) -> dict:
         "suffix": after[:48],
         "schema": 3,
     }
+
+
+def _group_page_units(units: list[dict]) -> dict:
+    grouped = {}
+    for unit in units:
+        grouped.setdefault(unit.get("page"), []).append(unit)
+    return grouped

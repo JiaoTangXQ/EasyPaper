@@ -11,12 +11,12 @@ services:
       - APP_CONFIG_PATH=/app/config/config.yaml
       - EASYPAPER_READER_LIBRARY_DIR=/app/reader-library
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   frontend:
     build: ./frontend
     ports:
-      - "80:80"
+      - "80:8080"
     depends_on:
       - backend
 

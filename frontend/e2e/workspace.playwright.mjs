@@ -97,6 +97,14 @@ async function setup(page, overrides = {}) {
       path = new URL(req.url()).pathname;
     let data = {};
     if (path === "/api/auth/login") data = { access_token: "workspace-test-only" };
+    else if (path === "/api/auth/features")
+      data = overrides.features ?? {
+        registration: true,
+        local_sync: true,
+        ai_available: true,
+        max_upload_mb: 50,
+        max_pages: 100,
+      };
     else if (path === "/api/tasks") data = overrides.tasks ?? tasks;
     else if (path.endsWith("/title-translation") && overrides.translateTitle) return overrides.translateTitle(route);
     else if (path === "/api/knowledge/papers") data = overrides.papers ?? papers;
@@ -116,6 +124,19 @@ async function setup(page, overrides = {}) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL("**/dashboard");
 }
+
+test("server workspace preserves upload limits and disables local filesystem settings", async ({ page }) => {
+  const calls = [];
+  page.on("request", (request) => calls.push(new URL(request.url()).pathname));
+  await setup(page, {
+    features: { registration: false, local_sync: false, ai_available: true, max_upload_mb: 15, max_pages: 30 },
+  });
+  await page.getByRole("button", { name: "导入论文", exact: true }).click();
+  await expect(page.getByText("也可拖拽到这里 · 最大 15 MB · 30 页")).toBeVisible();
+  await page.goto("/settings");
+  await expect(page.getByText("在知识笔记中导出 Obsidian ZIP，解压后放入自己的笔记库。")).toBeVisible();
+  expect(calls.some((path) => path.includes("/settings/obsidian"))).toBe(false);
+});
 
 test("returning readers can continue above the fold and imports preserve selected options", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -158,44 +179,49 @@ test("paper titles appear in the library and resume card while filenames remain 
   }
 });
 
-test("Chinese title subtitles translate once, retry without blocking reading, and fit narrow screens", async ({ page }, testInfo) => {
-  let calls = 0, finishFirst;
-  const pending = new Promise(resolve => { finishFirst = resolve; });
+test("Chinese title subtitles translate once, retry without blocking reading, and fit narrow screens", async ({
+  page,
+}, testInfo) => {
+  let calls = 0,
+    finishFirst;
+  const pending = new Promise((resolve) => {
+    finishFirst = resolve;
+  });
   await setup(page, {
     tasks: [{ ...tasks[0], title_zh: null }],
-    translateTitle: async route => {
+    translateTitle: async (route) => {
       calls++;
       if (calls === 1) {
         await pending;
-        return route.fulfill({status:503,json:{detail:"标题暂未翻译成功，请稍后重试。"}});
+        return route.fulfill({ status: 503, json: { detail: "标题暂未翻译成功，请稍后重试。" } });
       }
-      return route.fulfill({json:{title,title_zh:chineseTitle}});
+      return route.fulfill({ json: { title, title_zh: chineseTitle } });
     },
   });
   await expect(page.locator(".continue-paper h3")).toHaveText(title);
-  await expect(page.locator(".continue-paper").getByRole("button",{name:"继续阅读"})).toBeEnabled();
-  await expect(page.getByText("正在翻译标题…",{exact:true})).toHaveCount(2);
+  await expect(page.locator(".continue-paper").getByRole("button", { name: "继续阅读" })).toBeEnabled();
+  await expect(page.getByText("正在翻译标题…", { exact: true })).toHaveCount(2);
   expect(calls).toBe(1);
   finishFirst();
-  await page.getByRole("button",{name:"重试标题翻译",exact:true}).first().click();
+  await page.getByRole("button", { name: "重试标题翻译", exact: true }).first().click();
   await expect(page.locator(".continue-paper .paper-title-zh")).toHaveText(chineseTitle);
   await expect(page.locator(".paper-row .paper-title-zh")).toHaveText(chineseTitle);
   expect(calls).toBe(2);
-  for (const width of [1440,320]) {
-    await page.setViewportSize({width,height:1000});
-    const metrics=await page.locator(".continue-paper .paper-title-zh").evaluate(el=>({
-      title:el.previousElementSibling.getBoundingClientRect().bottom,
-      subtitle:el.getBoundingClientRect().top,
-      font:getComputedStyle(el).fontSize,
-      page:document.documentElement.scrollWidth,
+  for (const width of [1440, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const metrics = await page.locator(".continue-paper .paper-title-zh").evaluate((el) => ({
+      title: el.previousElementSibling.getBoundingClientRect().bottom,
+      subtitle: el.getBoundingClientRect().top,
+      font: getComputedStyle(el).fontSize,
+      page: document.documentElement.scrollWidth,
     }));
     expect(metrics.subtitle).toBeGreaterThanOrEqual(metrics.title);
     expect(metrics.font).toBe("14px");
     expect(metrics.page).toBeLessThanOrEqual(width);
-    await page.screenshot({path:testInfo.outputPath(`bilingual-titles-${width}.png`)});
+    await page.screenshot({ path: testInfo.outputPath(`bilingual-titles-${width}.png`) });
   }
   // A cached subtitle on reload must not start another model request.
-  await page.route("**/api/tasks", route=>route.fulfill({json:[{...tasks[0],title_zh:chineseTitle}]}));
+  await page.route("**/api/tasks", (route) => route.fulfill({ json: [{ ...tasks[0], title_zh: chineseTitle }] }));
   await page.reload();
   await expect(page.locator(".paper-row .paper-title-zh")).toHaveText(chineseTitle);
   expect(calls).toBe(2);
@@ -277,19 +303,33 @@ test("graph offers keyboard-accessible concepts and source navigation on small s
   await page.waitForURL("**/knowledge/paper/p1");
 });
 
-test("graph groups dense relationships, preserves the full view, and supports search and keyboard selection", async ({ page }) => {
-  const neighbors = Array.from({ length: 17 }, (_, index) => ({ ...entities[1], id: `related-${index}`, name: `关联概念 ${index}` }));
-  await setup(page, { graph: { nodes: [entities[0], ...neighbors, { ...entities[1], id: "isolated", name: "独立概念" }],
-    edges: neighbors.map(node => ({ id: `edge-${node.id}`, source: "e1", target: node.id, type: "uses" })) } });
+test("graph groups dense relationships, preserves the full view, and supports search and keyboard selection", async ({
+  page,
+}) => {
+  const neighbors = Array.from({ length: 17 }, (_, index) => ({
+    ...entities[1],
+    id: `related-${index}`,
+    name: `关联概念 ${index}`,
+  }));
+  await setup(page, {
+    graph: {
+      nodes: [entities[0], ...neighbors, { ...entities[1], id: "isolated", name: "独立概念" }],
+      edges: neighbors.map((node) => ({ id: `edge-${node.id}`, source: "e1", target: node.id, type: "uses" })),
+    },
+  });
   await page.goto("/knowledge/graph");
   const selected = page.locator(".concept-map-node[data-selected]");
   const nodes = page.locator(".concept-map-node");
   await expect(nodes).toHaveCount(9);
   await expect(selected).toHaveAttribute("data-graph-node", "e1");
-  const first = await nodes.evaluateAll(elements => elements.map(element => element.getAttribute("data-graph-node")));
+  const first = await nodes.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-graph-node")),
+  );
   await page.getByRole("button", { name: "下一组关联概念" }).click();
-  const second = await nodes.evaluateAll(elements => elements.map(element => element.getAttribute("data-graph-node")));
-  expect(second.filter(id => first.includes(id))).toEqual(["e1"]);
+  const second = await nodes.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-graph-node")),
+  );
+  expect(second.filter((id) => first.includes(id))).toEqual(["e1"]);
   await page.getByRole("button", { name: "下一组关联概念" }).click();
   await expect(nodes).toHaveCount(2);
   await expect(page.getByRole("button", { name: "下一组关联概念" })).toBeDisabled();
@@ -300,9 +340,11 @@ test("graph groups dense relationships, preserves the full view, and supports se
   await page.getByRole("button", { name: "适应画布" }).click();
   await expect(page.getByLabel("图谱缩放比例")).toHaveText("100%");
   const inspector = page.getByRole("complementary", { name: "选中的概念" });
-  await inspector.evaluate(element => { element.scrollTop = 250; });
+  await inspector.evaluate((element) => {
+    element.scrollTop = 250;
+  });
   await inspector.locator(".concept-relations > button").nth(8).click();
-  await expect.poll(() => inspector.evaluate(element => element.scrollTop)).toBe(0);
+  await expect.poll(() => inspector.evaluate((element) => element.scrollTop)).toBe(0);
   const search = page.getByLabel("查找概念名称");
   await search.fill("独立概念");
   await page.getByRole("button", { name: "独立概念 指标" }).focus();
@@ -316,7 +358,9 @@ test("graph groups dense relationships, preserves the full view, and supports se
   await page.waitForURL("**/knowledge/paper/p1");
 });
 
-test("graph tablet selection reveals the new definition and selected keyboard focus stays visible", async ({ page }) => {
+test("graph tablet selection reveals the new definition and selected keyboard focus stays visible", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1024, height: 850 });
   await setup(page);
   await page.goto("/knowledge/graph");
@@ -333,7 +377,9 @@ test("graph tablet selection reveals the new definition and selected keyboard fo
   expect(sourceBounds.y + sourceBounds.height).toBeLessThan(850);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await other.focus();
-  const style = await other.locator("rect").evaluate(element => ({ stroke: getComputedStyle(element).stroke, fill: getComputedStyle(element).fill }));
+  const style = await other
+    .locator("rect")
+    .evaluate((element) => ({ stroke: getComputedStyle(element).stroke, fill: getComputedStyle(element).fill }));
   expect(style.stroke).not.toBe(style.fill);
 });
 

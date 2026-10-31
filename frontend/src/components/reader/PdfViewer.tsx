@@ -80,7 +80,26 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   const awaitingSave = useRef(new Set<string>());
   const previousNative = useRef(new Map<string, PdfAnnotationObject>());
   const removers = useRef<(() => void)[]>([]);
-  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef(0);
+  const noticeSeen = useRef(new Set<string>());
+  const noticeHolds = useRef(false);
+  const showNotice = useCallback((message: string, persistent = false) => {
+    if (!message) {
+      if (noticeHolds.current) return;
+      window.clearTimeout(noticeTimer.current);
+      setNotice("");
+      return;
+    }
+    if (!persistent && noticeSeen.current.has(message)) return;
+    noticeSeen.current.add(message);
+    noticeHolds.current = persistent;
+    window.clearTimeout(noticeTimer.current);
+    setNotice(message);
+    if (persistent) return;
+    noticeTimer.current = window.setTimeout(() => setNotice(""), 12000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
   const textPages = useRef(new Map<number, Promise<TextPage>>());
   const reconcileEpoch = useRef(0);
   const reconcilePending = useRef<Promise<void>>(Promise.resolve());
@@ -204,7 +223,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       );
       if (epoch !== reconcileEpoch.current || registryRef.current !== registry) return;
       unresolvedText.current = unresolved > 0;
-      setError(unresolved ? `${unresolved} 条批注尚未定位到对应文字，原始记录已保留` : "");
+      showNotice(unresolved ? `${unresolved} 条批注尚未定位到对应文字，原始记录已保留` : "");
       const desired = new Map(objects.filter((a): a is PdfAnnotationObject => a !== null).map((a) => [a.id, a]));
       const present = new Map(
         api
@@ -247,7 +266,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
     })().catch(() => {
       if (epoch === reconcileEpoch.current && registryRef.current) {
         unresolvedText.current = true;
-        setError("批注文字定位未完成，请重新打开当前版本；原始记录已保留");
+        showNotice("批注文字定位未完成，请重新打开当前版本；原始记录已保留");
       }
     });
     return reconcilePending.current;
@@ -359,7 +378,9 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
         }),
       );
       removers.current.push(scroll.onPageChange((event) => callbacks.current.onPageChange(event.pageNumber)));
-      removers.current.push(documents.onDocumentError((event) => setError(event.message || "PDF 打开失败")));
+      removers.current.push(
+        documents.onDocumentError((event) => showNotice(event.message || "PDF 打开失败", true)),
+      );
       removers.current.push(
         registry
           .getPlugin<SelectionPlugin>("selection")!
@@ -471,9 +492,9 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   );
   return (
     <div className="pdf-viewer-container embed-reader">
-      {error ? (
-        <div className="reader-inline-error" role="alert">
-          {error}
+      {notice ? (
+        <div className="reader-inline-error" role="status">
+          {notice}
         </div>
       ) : null}
       <EmbedViewer config={config} onInit={setContainer} onReady={onReady} style={{ width: "100%", height: "100%" }} />

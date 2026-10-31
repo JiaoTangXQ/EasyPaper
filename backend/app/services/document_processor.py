@@ -42,6 +42,7 @@ class DocumentProcessingError(RuntimeError):
 
 class DocumentProcessor:
     def __init__(self, config: AppConfig, task_manager: TaskManager, ai_client: AIClient | None = None) -> None:
+        self.pdf_slots = asyncio.Semaphore(config.processing.max_concurrent)
         self.config = config
         self.task_manager = task_manager
         self.ai = ai_client or AIClient(config.llm)
@@ -51,6 +52,9 @@ class DocumentProcessor:
         self, task_id: str, file_bytes: bytes, filename: str, mode: str = "translate", highlight: bool = False
     ) -> None:
         """使用 pdf2zh 处理 PDF 文档"""
+
+        if mode == "gloss":
+            raise DocumentProcessingError("原文点读由导入流程准备，不生成译文。")
 
         if mode == "simplify":
             self.task_manager.update_progress(task_id, TaskStatus.PARSING, 10, "正在准备简化...")
@@ -159,7 +163,7 @@ class DocumentProcessor:
         # 创建临时目录
         with tempfile.TemporaryDirectory() as temp_dir:
             # 保存输入文件
-            input_path = Path(temp_dir) / filename
+            input_path = Path(temp_dir) / "input.pdf"
             input_path.write_bytes(file_bytes)
 
             logger.info(

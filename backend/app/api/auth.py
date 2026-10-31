@@ -47,12 +47,30 @@ def login(
     request: Request, form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)
 ) -> Any:
     # OAuth2PasswordRequestForm uses 'username' for the email field
-    user = session.exec(select(User).where(User.email == form_data.username)).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    user = session.exec(select(User).where(User.email == form_data.username.strip().lower())).first()
+    if (
+        len(form_data.password.encode("utf-8")) > 72
+        or not user
+        or not verify_password(form_data.password, user.hashed_password)
+    ):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
     access_token_expires = timedelta(hours=24)  # 1 day
-    access_token = create_access_token(subject=user.id, expires_delta=access_token_expires)
+    access_token = create_access_token(
+        subject=user.id, expires_delta=access_token_expires, token_version=user.token_version
+    )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/features")
+def features():
+    config = get_config()
+    return {
+        "registration": config.security.allow_registration,
+        "local_sync": config.security.local_sync_enabled,
+        "ai_available": config.llm.is_configured,
+        "max_upload_mb": config.processing.max_upload_mb,
+        "max_pages": config.processing.max_pages,
+    }

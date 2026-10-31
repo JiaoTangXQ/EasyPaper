@@ -1,0 +1,70 @@
+#!/bin/sh
+# Isolated Cursor CLI for EasyPaper. Reads one API key file and does not use
+# the host Cursor login. Update by replacing /opt/cursor-p/versions.
+set -eu
+
+version_dir=/opt/cursor-p/versions/2026.09.18-9a7762b
+binary="$version_dir/cursor-agent"
+keyfile="${CURSOR_P_KEY_FILE:-${HOME:-/home/app}/.config/cursor-p/api-key}"
+
+case "${1:-}" in
+  update|upgrade|install|set-channel|cleanup-install-versions|login|logout)
+    echo 'cursor-p: 此命令已禁用。请替换 /opt/cursor-p 中的版本目录。' >&2
+    exit 2
+    ;;
+esac
+
+if [ ! -x "$binary" ]; then
+  echo 'cursor-p: 找不到 Cursor 命令行。' >&2
+  exit 1
+fi
+
+if [ -n "${CURSOR_P_API_KEY:-}" ]; then
+  cursorp_api_key=$CURSOR_P_API_KEY
+elif [ -r "$keyfile" ]; then
+  cursorp_api_key=$(cat "$keyfile")
+else
+  echo 'cursor-p: 未配置 API key。' >&2
+  exit 1
+fi
+
+export AGENT_CLI_CREDENTIAL_STORE=memory
+export CURSOR_CONFIG_DIR="${CURSOR_CONFIG_DIR:-${HOME:-/home/app}/.config/cursor-p}"
+export CURSOR_DATA_DIR="${CURSOR_DATA_DIR:-${HOME:-/home/app}/.local/share/cursor-p/data}"
+export NODE_COMPILE_CACHE="${NODE_COMPILE_CACHE:-${HOME:-/home/app}/.cache/cursor-p-compile}"
+export CURSOR_API_KEY="$cursorp_api_key"
+unset CURSOR_P_API_KEY
+unset cursorp_api_key
+
+# Do not exec. Each request starts a node worker that otherwise keeps running
+# after the answer is returned and fills the container memory limit.
+errfile=${CURSOR_P_ERRFILE:-${HOME:-/home/app}/cursor-last.err}
+set +e
+"$binary" --disable-auto-update "$@" 2>"$errfile"
+status=$?
+set -e
+if [ -s "$errfile" ]; then
+  cat "$errfile" >&2
+fi
+python3 - "$$" << 'PY'
+import os, signal, sys
+shell = int(sys.argv[1])
+group = os.getpgrp()
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    pid = int(name)
+    if pid in {shell, os.getpid()}:
+        continue
+    try:
+        stat = open(f"/proc/{pid}/stat", encoding="utf-8").read()
+    except OSError:
+        continue
+    fields = stat[stat.rfind(")") + 2 :].split()
+    if len(fields) >= 3 and int(fields[2]) == group:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+PY
+exit "$status"
