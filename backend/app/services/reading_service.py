@@ -49,7 +49,9 @@ class ReadingService:
         # bounded cache because workspace/polling and reader routes repeatedly
         # request the same JSON document while the user turns pages.
         self._document_cache: OrderedDict[str, dict] = OrderedDict()
-        self._document_cache_limit = 8
+        # Two active papers cover the reader/dashboard case while keeping the
+        # 1 GiB production container from retaining several large PDFs.
+        self._document_cache_limit = 2
 
     def cached_title_translations(self, tasks: list[Task], titles: list[str | None]) -> dict[str, str]:
         if not tasks:
