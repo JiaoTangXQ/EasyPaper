@@ -236,6 +236,11 @@ class AIClient:
     async def _cursor(self, system, user, image_bytes, json_mode, model=None) -> str:
         with tempfile.TemporaryDirectory(prefix="easypaper-cursor-") as temp:
             directory = Path(temp)
+            # These workspaces contain only the prompt (and, for vision
+            # requests, source.png). Cursor's codebase index is unnecessary
+            # for inference and otherwise starts an unauthenticated indexing
+            # attempt for every short-lived CLI process.
+            (directory / ".cursorignore").write_text("**\n!source.png\n", encoding="utf-8")
             instructions = (
                 "You are EasyPaper's inference service for academic reading. "
                 "Follow the task instructions. Do not act as a coding agent. "

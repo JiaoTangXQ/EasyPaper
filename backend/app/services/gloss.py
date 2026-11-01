@@ -13,10 +13,12 @@ from .reader_geometry import normalized
 
 # Keep each request below the model's timeout while amortizing Cursor startup
 # and network latency across more sentences. Coverage validation still splits
-# an individual batch when the model cannot return a complete tiling.
+# an individual batch when the model cannot return a complete tiling. The
+# model is asked to keep ordinary words together where possible, so the
+# larger request does not turn into an oversized per-word JSON response.
 GLOSS_MODEL = "grok-4.7-low-fast"
-GLOSS_BATCH_UNITS = 12
-GLOSS_BATCH_CHARS = 900
+GLOSS_BATCH_UNITS = 16
+GLOSS_BATCH_CHARS = 1200
 GLOSS_CALL_TIMEOUT = 180
 GLOSS_CONCURRENCY = 2
 
@@ -34,7 +36,7 @@ GLOSS_SYSTEM = (
     "你在为英文学术论文做点读准备。每个句子都要切成前后相接、互不重叠的块，并铺满整句。"
     "读者点到块里的任意一个词，都会看到这一整块的解释，所以固定搭配、俚语、术语、句式和缩写必须整块切出。\n"
     "类别只能是 word、term、collocation、idiom、discourse、pattern、abbreviation。\n"
-    "每个块都必须给出 simple_en，用 CEFR B1-B2 常用词写一句短而清楚的英文解释；绝不能省略这个字段，也不要用生僻词解释生僻词。\n"
+    "每个块都必须给出 simple_en，用 CEFR B1-B2 常用词写一句短而清楚的英文解释；绝不能省略这个字段，也不要用生僻词解释生僻词。普通连续词和功能词可以合并成一个有意义的短块，不要为每个功能词单独建块。\n"
     "word 是单独一个单词，给出 zh（中文意思）、ipa（IPA 音标）和 en（与 simple_en 相同，保留旧字段兼容）。\n"
     "其余类别给出 zh（中文意思）、ipa（能判断时给短语音标）和 role（它在这句里起什么作用）。\n"
     "标点附在相邻块上。text 必须按顺序抄自原句，合起来覆盖每一个词。\n"
