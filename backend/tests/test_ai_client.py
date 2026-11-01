@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import LLMConfig
-from app.services.ai_client import AIClient, AIError
+from app.services.ai_client import AIClient, AIError, cursor_environment
 
 
 def _fake_codex(tmp_path: Path, body: str) -> str:
@@ -59,6 +59,13 @@ def _fake_cursor(tmp_path: Path, body: str) -> str:
 
 def _cursor_config(executable: str) -> LLMConfig:
     return LLMConfig(provider="cursor", cursor={"executable": executable, "timeout_seconds": 10, "model": "fixture-model"})
+
+
+def test_cursor_environment_sets_user_when_missing(monkeypatch):
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    env = cursor_environment()
+    assert env.get("USER")
 
 
 @pytest.mark.asyncio

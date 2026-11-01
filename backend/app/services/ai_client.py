@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import getpass
 import json
 import os
 import signal
@@ -92,8 +93,18 @@ def cursor_environment() -> dict[str, str]:
         "CURSOR_DATA_DIR",
         "NODE_COMPILE_CACHE",
         "CURSOR_P_KEY_FILE",
+        # cursor-j reads the macOS keychain with security(1) before ~/.config/cursor-j/api-key;
+        # its wrapper uses ${USER:?} and aborts when USER is missing.
+        "USER",
+        "LOGNAME",
     )
-    return {**{key: os.environ[key] for key in allowed if key in os.environ}, "NO_COLOR": "1"}
+    env = {**{key: os.environ[key] for key in allowed if key in os.environ}, "NO_COLOR": "1"}
+    if "USER" not in env:
+        try:
+            env["USER"] = getpass.getuser()
+        except OSError:
+            pass
+    return env
 
 
 def cursor_failure(stderr: str) -> AIError:
