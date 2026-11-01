@@ -118,6 +118,9 @@ class ServerGuard:
             limit = (self.config.processing.max_upload_mb + 1) * 1024 * 1024
         if path.startswith("/api/reader/") and path.endswith("/restore"):
             limit = 129 * 1024 * 1024
+        # Gloss worker uploads all spans in one JSON body (see gloss_worker_service.MAX_SPANS_BYTES).
+        if path.startswith("/api/gloss-worker/jobs/") and path.endswith("/complete"):
+            limit = 64 * 1024 * 1024
         try:
             if int(headers.get(b"content-length", b"0")) > limit:
                 return await reject(413, "请求内容超过大小限制")

@@ -42,6 +42,10 @@ def server(engine, account):
     async def tts():
         return {"ok": True}
 
+    @app.post("/api/gloss-worker/jobs/{claim_token}/complete")
+    async def gloss_worker_complete(request: Request):
+        return {"size": len(await request.body())}
+
     return TestClient(app), {"Authorization": "Bearer " + create_access_token(account.id)}, config
 
 
@@ -172,6 +176,14 @@ def test_rejects_oversized_body_with_and_without_content_length(server):
     # Streaming payload: enforce size while consuming, even without Content-Length.
     response = client.post("/api/protected", content=iter([b"x" * (1024**2 + 1)]), headers=headers)
     assert response.status_code == 413
+
+
+def test_allows_gloss_worker_complete_payload(server):
+    client, _, _ = server
+    body = b"x" * (2 * 1024 * 1024)
+    response = client.post("/api/gloss-worker/jobs/fixture-token/complete", content=body)
+    assert response.status_code == 200
+    assert response.json()["size"] == len(body)
 
 
 def test_daily_quota_persists_across_requests_and_keeps_reads_available(server):
