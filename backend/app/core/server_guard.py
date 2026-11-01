@@ -131,7 +131,8 @@ class ServerGuard:
         self.large_active += int(large)
         try:
             public = {"/api/auth/login", "/api/auth/register", "/api/auth/features"}
-            if path.startswith("/api/") and path not in public and method != "OPTIONS":
+            worker_api = path.startswith("/api/gloss-worker/")
+            if path.startswith("/api/") and path not in public and not worker_api and method != "OPTIONS":
                 value = headers.get(b"authorization", b"").decode("latin-1")
                 scheme, _, token = value.partition(" ")
                 if scheme.lower() != "bearer" or not token:
