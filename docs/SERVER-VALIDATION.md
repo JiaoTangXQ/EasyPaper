@@ -175,7 +175,7 @@
 
 ## 2026-09-13: Public HTTPS verified
 
-- After the administrator completed the security-group change, a direct public-network request to `https://121.40.108.230:8443/login` returned HTTP 200 with TLS verification result 0. The temporary SSH verification tunnel was not used.
+- After the administrator completed the security-group change, a direct public-network request to the server's HTTPS entry (example: `https://203.0.113.10:8443/login`) returned HTTP 200 with TLS verification result 0. The temporary SSH verification tunnel was not used. The address above is a documentation example, not the production server.
 
 ## 2026-09-13：生产上传/远程下载上限调整为 50 MB
 
