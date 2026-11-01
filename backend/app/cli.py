@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 
 from email_validator import validate_email
@@ -54,10 +55,28 @@ def main(argv: list[str] | None = None) -> int:
     for action in ("create-user", "reset-password", "disable-user", "enable-user"):
         sub.add_parser(action).add_argument("email")
     sub.add_parser("list-users")
+    worker = sub.add_parser("gloss-worker", help="Run a trusted local gloss preparation worker")
+    worker.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
+    worker.add_argument("--token", default=os.getenv("GLOSS_WORKER_TOKEN", ""))
+    worker.add_argument("--label", default=os.getenv("EASYPAPER_GLOSS_WORKER_LABEL", "local-worker"))
+    worker.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5")))
     args = parser.parse_args(argv)
     from .core.db import engine, init_db
 
     init_db()
+    if args.command == "gloss-worker":
+        from .gloss_worker.runner import run_worker
+
+        try:
+            return run_worker(
+                base_url=args.base_url,
+                token=args.token,
+                worker_label=args.label,
+                poll_seconds=args.poll_seconds,
+            )
+        except (ValueError, KeyboardInterrupt) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     try:
         with Session(engine) as session:
             if args.command == "list-users":

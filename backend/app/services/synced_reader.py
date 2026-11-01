@@ -303,8 +303,8 @@ class SyncedReader:
             await self.ensure_ai_highlights(doc_id)
             return self.bundle(doc_id, user_id)
 
-    async def prepare_gloss_for_task(self, task, on_progress=None):
-        """Index the original PDF and write click glosses before the reader opens."""
+    async def prepare_gloss_index(self, task) -> str:
+        """Index the original PDF and ensure a reader document exists."""
         await self.open_task(task, task.user_id)
         with Session(self.engine) as session:
             link = session.get(ReaderTaskLink, task.task_id)
@@ -315,6 +315,11 @@ class SyncedReader:
         units = json.loads(source.index_json).get("units") or []
         if not any((unit.get("text") or "").strip() for unit in units):
             raise GlossImportError("原文里没有可点读的文字。")
+        return document_id
+
+    async def prepare_gloss_for_task(self, task, on_progress=None):
+        """Index the original PDF and write click glosses before the reader opens."""
+        document_id = await self.prepare_gloss_index(task)
         if not self.request_build(document_id, "gloss"):
             raise GlossImportError("原文点读正在准备，请稍后再试。")
         try:

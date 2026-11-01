@@ -18,6 +18,7 @@ from .api.agent_routes import create_agent_router
 from .api.auth import router as auth_router
 from .api.settings_routes import router as settings_router
 from .api.knowledge_routes import create_knowledge_router
+from .api.gloss_worker_routes import create_gloss_worker_router
 from .api.reader_routes import create_reader_router
 from .api.reading_routes import create_reading_router
 from .api.routes import create_router
@@ -27,9 +28,11 @@ from .core.logger import setup_logging
 from .mcp.server import create_mcp_server
 from .services.ai_client import AIClient
 from .services.document_processor import DocumentProcessor
+from .services.gloss_worker_service import GlossWorkerService
 from .services.job_queue import JobQueue
 from .services.knowledge_extractor import KnowledgeExtractor
 from .services.reading_service import ReadingService
+from .services.synced_reader import SyncedReader
 from .services.task_manager import TaskManager
 from .services.translation_artifact_service import TranslationArtifactService
 from .services.translation_draft_service import TranslationDraftService
@@ -60,6 +63,13 @@ execution_service = TranslationExecutionService(
 reading_service = ReadingService(config, engine, ai_client=ai_client)
 reading_service.reader_processor = processor
 reading_service.job_queue = job_queue
+reading_service.synced_reader = SyncedReader(reading_service)
+gloss_worker_service = GlossWorkerService(
+    config=config,
+    engine=engine,
+    task_manager=task_manager,
+    synced_reader=reading_service.synced_reader,
+)
 artifact_service = TranslationArtifactService(task_manager=task_manager)
 mcp_server = create_mcp_server(
     draft_service=draft_service,
@@ -111,7 +121,8 @@ app.include_router(
         artifact_service=artifact_service,
     )
 )
-app.include_router(create_router(task_manager, processor, reading_service, job_queue))
+app.include_router(create_router(task_manager, processor, reading_service, job_queue, gloss_worker_service))
+app.include_router(create_gloss_worker_router(gloss_worker_service))
 app.include_router(create_knowledge_router(knowledge_extractor, job_queue))
 app.include_router(create_reading_router(reading_service))
 app.include_router(create_reader_router(reading_service))
@@ -137,8 +148,11 @@ async def on_startup() -> None:
 
     from .models.reading import ReaderBuild
 
+    gloss_worker_service.recover_after_restart()
     with Session(engine) as session:
         for build in session.exec(select(ReaderBuild).where(ReaderBuild.status == "running")).all():
+            if build.kind == "gloss":
+                continue
             build.status, build.error = "error", "生成因服务重启中断，可重试；已有版本和批注仍保留"
             session.add(build)
         session.commit()

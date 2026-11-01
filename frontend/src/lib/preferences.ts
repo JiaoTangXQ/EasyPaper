@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 
+export type GlossPreparationPreference = "server" | "remote_worker";
+
 export type UserPreferences = {
   reading: {
     gloss: {
       auto_speak: boolean;
+      preparation: GlossPreparationPreference;
     };
   };
   updated_at?: string | null;
@@ -15,6 +18,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   reading: {
     gloss: {
       auto_speak: false,
+      preparation: "server",
     },
   },
 };
@@ -31,6 +35,10 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       gloss: {
         ...gloss,
         auto_speak: typeof gloss.auto_speak === "boolean" ? gloss.auto_speak : false,
+        preparation:
+          gloss.preparation === "remote_worker" || gloss.preparation === "server"
+            ? gloss.preparation
+            : "server",
       },
     },
     updated_at: typeof source.updated_at === "string" ? source.updated_at : null,

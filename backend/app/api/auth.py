@@ -7,6 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
+from ..services.gloss_preparation import remote_worker_ready
 from ..core.config import get_config
 from ..core.db import get_session
 from ..core.security import create_access_token, get_password_hash, verify_password
@@ -73,4 +74,6 @@ def features():
         "ai_available": config.llm.is_configured,
         "max_upload_mb": config.processing.max_upload_mb,
         "max_pages": config.processing.max_pages,
+        "gloss_preparation_site": config.processing.gloss_preparation,
+        "gloss_worker_configured": remote_worker_ready(config),
     }

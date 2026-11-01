@@ -155,6 +155,8 @@ def test_features_expose_capabilities_without_credentials(client, monkeypatch):
         "max_upload_mb": 15,
         "registration": True,
         "local_sync": True,
+        "gloss_preparation_site": "server",
+        "gloss_worker_configured": False,
     }
     config.llm.api_key = "private-value"
     assert client.get("/api/auth/features").json()["ai_available"] is True

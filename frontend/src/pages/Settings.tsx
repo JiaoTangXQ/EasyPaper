@@ -123,6 +123,29 @@ export default function Settings() {
     }
   };
 
+  const handlePreparationChange = async (preparation: "server" | "remote_worker") => {
+    const previous = preferences;
+    const next = {
+      ...preferences,
+      reading: {
+        ...preferences.reading,
+        gloss: { ...preferences.reading.gloss, preparation },
+      },
+    };
+    setPreferences(next);
+    setPreferencesSaving(true);
+    try {
+      const { data } = await api.put("/api/settings/preferences", next);
+      setPreferences(normalizeUserPreferences(data));
+      toast.success(preparation === "remote_worker" ? "点读准备将使用本机处理器。" : "点读准备将使用服务器。");
+    } catch (error) {
+      setPreferences(previous);
+      toast.error(getApiErrorMessage(error, "保存点读准备方式失败。"));
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
+
   return (
     <div className="page-stack settings-page">
       <PageHeader title="设置" description="按阅读体验、朗读、连接与数据分类管理你的使用偏好。" />
@@ -151,6 +174,47 @@ export default function Settings() {
                 aria-label="点读后自动朗读"
               />
             </div>
+            {features.gloss_preparation_site === "user_choice" ? (
+              <div className="settings-option settings-option-stack">
+                <div>
+                  <h3>点读准备方式</h3>
+                  <p>
+                    选择点读释义在何处生成。本机处理器需要管理员在服务器配置令牌，并在你的电脑上运行{" "}
+                    <code>python -m app.cli gloss-worker</code>。
+                    {!features.gloss_worker_configured ? (
+                      <span className="settings-warning"> 当前服务器尚未配置本地点读令牌，选「本机」会失败。</span>
+                    ) : null}
+                  </p>
+                </div>
+                <div className="settings-radio-group" role="radiogroup" aria-label="点读准备方式">
+                  <label className="settings-radio">
+                    <input
+                      type="radio"
+                      name="gloss-preparation"
+                      checked={preferences.reading.gloss.preparation === "server"}
+                      disabled={preferencesLoading || preferencesSaving}
+                      onChange={() => void handlePreparationChange("server")}
+                    />
+                    在服务器上准备（默认链路）
+                  </label>
+                  <label className="settings-radio">
+                    <input
+                      type="radio"
+                      name="gloss-preparation"
+                      checked={preferences.reading.gloss.preparation === "remote_worker"}
+                      disabled={preferencesLoading || preferencesSaving}
+                      onChange={() => void handlePreparationChange("remote_worker")}
+                    />
+                    在本机处理器上准备（更快，需保持 worker 运行）
+                  </label>
+                </div>
+              </div>
+            ) : features.gloss_preparation_site === "remote_worker" ? (
+              <p className="settings-note">
+                此站点已固定使用本地点读处理器准备点读释义。请在服务器配置 <code>GLOSS_WORKER_TOKEN</code>{" "}
+                并在本机运行 worker。
+              </p>
+            ) : null}
           </section>
 
           <section id="speech-settings" className="settings-section">

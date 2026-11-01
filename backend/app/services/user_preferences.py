@@ -16,6 +16,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "reading": {
         "gloss": {
             "auto_speak": False,
+            "preparation": "server",
         },
     },
 }
@@ -36,6 +37,8 @@ def _merge_preferences(value: Any) -> dict[str, Any]:
         gloss = reading["gloss"] = {}
     if not isinstance(gloss.get("auto_speak"), bool):
         gloss["auto_speak"] = DEFAULT_PREFERENCES["reading"]["gloss"]["auto_speak"]
+    if gloss.get("preparation") not in {"server", "remote_worker"}:
+        gloss["preparation"] = DEFAULT_PREFERENCES["reading"]["gloss"]["preparation"]
     return result
 
 

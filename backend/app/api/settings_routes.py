@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +19,7 @@ class GlossPreferences(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     auto_speak: bool = False
+    preparation: Literal["server", "remote_worker"] = "server"
 
 
 class ReadingPreferences(BaseModel):

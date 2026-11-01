@@ -45,7 +45,7 @@ class TTSRequest(BaseModel):
 def create_reader_router(reading):
     router = APIRouter(prefix="/api/reader", tags=["reader-annotations"])
     queue = getattr(reading, "job_queue", None) or JobQueue(reading.config.processing)
-    service = SyncedReader(reading)
+    service = getattr(reading, "synced_reader", None) or SyncedReader(reading)
     tts = ReaderTTS()
     reading.synced_reader = service
 

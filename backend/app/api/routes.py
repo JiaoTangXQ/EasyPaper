@@ -15,11 +15,12 @@ from slowapi.util import get_remote_address
 from sqlmodel import Session
 
 from ..core.config import get_config
-from ..core.db import get_session
+from ..core.db import engine, get_session
 from ..models.task import TaskStatus
 from ..models.user import User
 from ..services.ai_client import AIError
 from ..services.document_processor import DocumentProcessor
+from ..services.gloss_preparation import remote_worker_ready, resolve_gloss_preparation
 from ..services.job_queue import JobQueue
 from ..services.paper_summarizer import PaperSummarizer
 from ..services.pdf_downloader import PdfDownloader
@@ -27,6 +28,7 @@ from ..services.pdf_metadata import pdf_title
 from ..services.pdf_validation import validate_pdf
 from ..services.synced_reader import GlossImportError
 from ..services.task_manager import TaskManager
+from ..services.user_preferences import get_preferences
 from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,11 @@ IMPORT_MODES = {"translate", "simplify", "gloss"}
 
 
 def create_router(
-    task_manager: TaskManager, processor: DocumentProcessor, reading_service=None, job_queue=None
+    task_manager: TaskManager,
+    processor: DocumentProcessor,
+    reading_service=None,
+    job_queue=None,
+    gloss_worker_service=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["documents"])
     cfg = get_config()
@@ -87,6 +93,31 @@ def create_router(
                 result_pdf_path=current.result_pdf_path,
                 result_dual_pdf_path=current.result_dual_pdf_path,
             )
+            with Session(engine) as session:
+                prefs = get_preferences(session, current.user_id)
+            preparation = resolve_gloss_preparation(cfg, prefs)
+            if preparation == "remote_worker":
+                if gloss_worker_service is None:
+                    task_manager.set_error(task_id, "本地点读处理器服务不可用，请联系管理员。")
+                    return
+                if not remote_worker_ready(cfg):
+                    task_manager.set_error(
+                        task_id,
+                        "服务器尚未配置本地点读处理器令牌，无法使用本机准备。请联系管理员或改用服务器准备。",
+                    )
+                    return
+                try:
+                    document_id = await reader.prepare_gloss_index(paper)
+                    gloss_worker_service.enqueue(
+                        task_id=current.task_id,
+                        document_id=document_id,
+                        user_id=current.user_id,
+                    )
+                except GlossImportError as exc:
+                    task_manager.set_error(task_id, str(exc))
+                    return
+                report(TaskStatus.REWRITING, 15, "已排队，等待本地点读处理器领取…")
+                return
             try:
                 await reader.prepare_gloss_for_task(paper, on_batch)
             except GlossImportError as exc:

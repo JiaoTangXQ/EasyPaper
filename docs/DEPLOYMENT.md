@@ -254,6 +254,34 @@ docker compose -f docker-compose.prod.yml -f deploy/compose.codex.yml up -d --no
 `http://172.18.0.1:7894`，该代理只绑定 EasyPaper Docker 网桥，不开放公网。
 公网入口的反向代理读取超时为 300 秒。
 
+## 本地点读处理器（第二条 gloss 链路）
+
+默认链路仍在 **服务器 backend** 内调用 AI 准备点读（`processing.gloss_preparation: server`）。
+若希望 **网页提交任务、在本机高性能电脑准备 gloss、结果回传服务器供其它设备阅读**，
+启用第二条链路：
+
+1. 在服务器 `.env` 或 `deploy/config.production.yaml` 设置：
+   - `EASYPAPER_GLOSS_PREPARATION=user_choice`（让用户在「设置」里选择）或 `remote_worker`（强制本机）
+   - `GLOSS_WORKER_TOKEN=` 使用 `openssl rand -hex 32` 生成，**仅写入服务器与本机 worker，勿提交 Git**
+2. 重新部署 backend 使配置生效。
+3. 在本机（与服务器网络可达）安装与线上一致的 backend 依赖，配置 **本地 AI**（API Key 或 Cursor/Codex）。
+4. 运行 worker（长期前台或 systemd）：
+
+```bash
+cd backend
+export GLOSS_WORKER_TOKEN='与服务器相同'
+export EASYPAPER_SERVER_URL='https://你的域名'
+export EASYPAPER_GLOSS_CONCURRENCY=4   # 按本机内存调整
+python -m app.cli gloss-worker --base-url "$EASYPAPER_SERVER_URL" --token "$GLOSS_WORKER_TOKEN"
+```
+
+用户在网站导入 **点读（gloss）** 论文后，任务会先 **索引 PDF 并排队**；worker 领取任务、下载原文包、
+在本机跑 `prepare_gloss`，完成后上传 spans。其它电脑打开同一账号即可阅读点读结果。
+
+- **旧链路保留**：`gloss_preparation: server` 时行为与升级前一致。
+- **生产安全**：worker 接口仅接受 `Authorization: Bearer <GLOSS_WORKER_TOKEN>`；令牌泄露等同于允许代写点读数据，请轮换令牌并限制网络访问。
+- **租约**：默认 900 秒，worker 处理期间会 heartbeat；服务器重启后未完成任务会重新排队。
+
 ## 阿里云镜像下载缓慢时
 
 可在可联网的构建机器上，按 ECS 架构构建镜像，推送到你自己的阿里云 ACR 私有仓库。

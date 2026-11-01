@@ -40,6 +40,7 @@ def init_db():
         agent,  # noqa: F401
         knowledge,  # noqa: F401
         reading,  # noqa: F401
+        gloss_worker,  # noqa: F401
         task,  # noqa: F401
         usage,  # noqa: F401
         user,  # noqa: F401

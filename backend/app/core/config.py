@@ -9,6 +9,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+GlossPreparationSite = Literal["server", "remote_worker", "user_choice"]
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,9 +62,18 @@ class LLMConfig(BaseModel):
         )
 
 
+class GlossWorkerConfig(BaseModel):
+    token: str = Field("", alias="token")
+    lease_seconds: int = Field(900, ge=60, le=86400, alias="lease_seconds")
+
+
 class ProcessingConfig(BaseModel):
     max_pages: int = Field(100, ge=1, le=500, alias="max_pages")
     max_upload_mb: int = Field(50, ge=1, le=128, alias="max_upload_mb")
+    gloss_preparation: Literal["server", "remote_worker", "user_choice"] = Field(
+        "server",
+        alias="gloss_preparation",
+    )
     max_concurrent: int = Field(3, ge=1, le=8, alias="max_concurrent")
     # Paragraph requests per document; independent of the concurrent document limit.
     translation_threads: int = Field(8, ge=1, le=16)
@@ -113,6 +124,7 @@ class AgentConfig(BaseModel):
 class AppConfig(BaseModel):
     llm: LLMConfig
     processing: ProcessingConfig = ProcessingConfig()
+    gloss_worker: GlossWorkerConfig = Field(default_factory=GlossWorkerConfig)
     storage: StorageConfig = StorageConfig()
     logging: LoggingConfig = LoggingConfig()
     database: DatabaseConfig = DatabaseConfig()
@@ -206,10 +218,25 @@ def get_config() -> AppConfig:
             raw.setdefault("llm", {}).setdefault("cursor", {})[key] = value
     # The server edition is invitation-only. Local filesystem access and shared
     # agent credentials are intentionally unavailable, even with an old config.
+    if site := os.getenv("EASYPAPER_GLOSS_PREPARATION"):
+        raw.setdefault("processing", {})["gloss_preparation"] = site
+    if token := os.getenv("GLOSS_WORKER_TOKEN"):
+        raw.setdefault("gloss_worker", {})["token"] = token
+    if lease := os.getenv("EASYPAPER_GLOSS_WORKER_LEASE_SECONDS"):
+        raw.setdefault("gloss_worker", {})["lease_seconds"] = lease
     if os.getenv("APP_ENV", "").lower() in {"production", "prod"}:
         raw.setdefault("security", {}).update(allow_registration=False, local_sync_enabled=False)
         raw.setdefault("agent", {}).update(enabled=False, api_keys=[])
     config = AppConfig(**raw)
+    if config.processing.gloss_preparation in {"remote_worker", "user_choice"} and not config.gloss_worker.token.strip():
+        if os.getenv("APP_ENV", "").lower() in {"production", "prod"} and config.processing.gloss_preparation == "remote_worker":
+            raise RuntimeError(
+                "Refusing to start in production: gloss_preparation=remote_worker requires gloss_worker.token "
+                "(set GLOSS_WORKER_TOKEN or gloss_worker.token in config)."
+            )
+        logger.warning(
+            "Gloss remote worker is enabled but gloss_worker.token is empty; remote jobs cannot be claimed."
+        )
 
     # Validate critical settings at startup (fail-fast in production).
     validate_security(config, os.getenv("APP_ENV", "development"))
