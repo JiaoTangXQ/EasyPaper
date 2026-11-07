@@ -265,7 +265,17 @@ docker compose -f docker-compose.prod.yml -f deploy/compose.codex.yml up -d --no
    - `GLOSS_WORKER_TOKEN=` 使用 `openssl rand -hex 32` 生成，**仅写入服务器与本机 worker，勿提交 Git**
 2. 重新部署 backend 使配置生效。
 3. 在本机（与服务器网络可达）安装与线上一致的 backend 依赖，配置 **本地 AI**（API Key 或 Cursor/Codex）。
-4. 运行 worker（长期前台或 systemd）：
+4. 运行 worker。macOS 推荐 **LaunchAgent 自启**（登录后常驻、崩溃自动拉起）：
+
+```bash
+# 令牌写入 ~/.config/easypaper/gloss-worker.token（与服务器 GLOSS_WORKER_TOKEN 相同，chmod 600）
+chmod +x deploy/macos/install-gloss-worker-launchd.sh deploy/macos/gloss-worker-run.sh
+./deploy/macos/install-gloss-worker-launchd.sh
+# 日志：~/Library/Logs/EasyPaper/gloss-worker.{out,err}.log
+# 停用：launchctl bootout gui/$(id -u)/com.easypaper.gloss-worker
+```
+
+临时前台调试仍可用：
 
 ```bash
 cd backend
