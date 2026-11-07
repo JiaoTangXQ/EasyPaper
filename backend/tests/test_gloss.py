@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -40,6 +41,26 @@ def test_tiles_a_sentence_into_a_pattern_and_keeps_the_original_words():
     assert spans[2]["en"] == "performs better than"
     assert spans[2]["simple_en"] == "performs better than"
     assert "role" not in spans[2]
+
+
+def test_rejects_overmerged_single_span_tiling():
+    from app.services.gloss import _reject_overmerged_tiling
+
+    source = "We propose a scalable agent training system with reinforcement learning and human feedback."
+    with pytest.raises(GlossCoverageError, match="合并"):
+        _reject_overmerged_tiling(
+            source,
+            [{"text": source, "category": "pattern", "zh": "整句", "role": "整句"}],
+        )
+
+
+def test_cover_rejects_model_returning_one_block_per_long_sentence():
+    from app.services.gloss import _reject_overmerged_tiling
+
+    text = "We propose a scalable agent training system with reinforcement learning and human feedback."
+    one = [{"text": text, "category": "pattern", "zh": "x", "role": "y"}]
+    with pytest.raises(GlossCoverageError, match="合并"):
+        _reject_overmerged_tiling(text, one)
 
 
 def test_rejects_a_gap_and_keeps_a_multiword_word_span_as_a_term():
@@ -136,22 +157,30 @@ class _AI:
             raise answer
         if answer == "echo":
             payload = json.loads(user)
-            return {
-                "sentences": [
-                    {
-                        "id": sentence["id"],
-                        "spans": [
+            sentences = []
+            for sentence in payload["sentences"]:
+                text = sentence["text"]
+                spans: list[dict] = []
+                for match in re.finditer(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*|[^\sA-Za-z0-9]+", text):
+                    piece = match.group(0)
+                    if re.match(r"[A-Za-z0-9]", piece):
+                        spans.append(
                             {
-                                "text": sentence["text"],
-                                "category": "pattern",
-                                "zh": "整句意思",
-                                "role": "陈述这一句",
+                                "text": piece,
+                                "category": "word",
+                                "zh": "词",
+                                "en": "word",
+                                "simple_en": "a word",
                             }
-                        ],
-                    }
-                    for sentence in payload["sentences"]
-                ]
-            }
+                        )
+                    elif spans:
+                        spans[-1]["text"] += piece
+                    else:
+                        spans.append(
+                            {"text": piece, "category": "word", "zh": "词", "en": "word", "simple_en": "a word"}
+                        )
+                sentences.append({"id": sentence["id"], "spans": spans})
+            return {"sentences": sentences}
         return answer
 
 
@@ -173,9 +202,11 @@ async def test_prepare_gloss_retries_a_sentence_that_does_not_cover_the_source()
     )
     spans = await prepare_gloss(ai, units)
     assert ai.calls == 2
-    assert spans[0]["text"] == "LLM means large language model."
-    assert spans[0]["category"] == "pattern"
-    assert spans[0]["page"] == 2
+    from app.services.reader_geometry import normalized
+
+    assert normalized("".join(span["text"] for span in spans)) == normalized("LLM means large language model.")
+    assert len(spans) > 1
+    assert all(span["page"] == 2 for span in spans)
 
 
 @pytest.mark.asyncio
@@ -187,8 +218,8 @@ async def test_prepare_gloss_reports_each_finished_batch():
     seen = []
     spans = await prepare_gloss(_AI(["echo"]), units, on_progress=lambda done, total: seen.append((done, total)))
     assert seen == [(1, 1)]
-    assert [span["page"] for span in spans] == [0, 0]
-    assert spans[0]["unit_id"] == "s1"
+    assert {span["unit_id"] for span in spans} == {"s1", "s2"}
+    assert all(span["page"] == 0 for span in spans)
 
 
 @pytest.mark.asyncio
@@ -201,13 +232,13 @@ async def test_prepare_gloss_splits_a_batch_that_times_out_and_skips_finished_se
     saved = []
     spans = await prepare_gloss(ai, units, on_batch=saved.extend)
     assert ai.calls == 3
-    assert [span["unit_id"] for span in spans] == ["s1", "s2"]
+    assert {span["unit_id"] for span in spans} == {"s1", "s2"}
     assert saved == spans
 
     again = _AI(["echo"])
     skipped = await prepare_gloss(again, units, skip_ids={"s1"})
     assert again.calls == 1
-    assert [span["unit_id"] for span in skipped] == ["s2"]
+    assert {span["unit_id"] for span in skipped} == {"s2"}
 
 
 @pytest.mark.asyncio
@@ -219,4 +250,4 @@ async def test_prepare_gloss_keeps_a_long_sentence_in_its_own_batch():
     seen = []
     spans = await prepare_gloss(_AI(["echo", "echo"]), units, on_progress=lambda done, total: seen.append((done, total)))
     assert seen == [(1, 2), (2, 2)]
-    assert [span["unit_id"] for span in spans] == ["s1", "s2"]
+    assert {span["unit_id"] for span in spans} == {"s1", "s2"}

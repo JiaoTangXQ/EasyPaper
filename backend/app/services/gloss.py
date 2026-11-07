@@ -13,9 +13,8 @@ from .reader_geometry import normalized
 
 # Keep each request below the model's timeout while amortizing Cursor startup
 # and network latency across more sentences. Coverage validation still splits
-# an individual batch when the model cannot return a complete tiling. The
-# model is asked to keep ordinary words together where possible, so the
-# larger request does not turn into an oversized per-word JSON response.
+# an individual batch when the model cannot return a complete tiling.
+# Tiling asks for word-level spans, merging only fixed phrases and multi-word terms.
 GLOSS_MODEL = "grok-4.7-low-fast"
 GLOSS_BATCH_UNITS = 24
 GLOSS_BATCH_CHARS = 1800
@@ -35,13 +34,19 @@ LABELS = {
 
 GLOSS_SYSTEM = (
     "你在为英文学术论文做点读准备。每个句子都要切成前后相接、互不重叠的块，并铺满整句。"
-    "读者点到块里的任意一个词，都会看到这一整块的解释，所以固定搭配、俚语、术语、句式和缩写必须整块切出。\n"
-    "类别只能是 word、term、collocation、idiom、discourse、pattern、abbreviation。\n"
-    "每个块都必须给出 simple_en，用 CEFR B1-B2 常用词写一句短而清楚的英文解释；绝不能省略这个字段，也不要用生僻词解释生僻词。每个句子通常只切成 1-4 个有意义的块：普通连续词、冠词、介词和其他功能词必须和相邻内容合并，不要按每个单词单独建块；只有关键术语、固定搭配、俚语、逻辑词、学术句式、缩写或确实值得单独学习的词才拆开。\n"
-    "word 只用于值得单独学习的单词，给出 zh（中文意思）、ipa（IPA 音标）和 en（与 simple_en 相同，保留旧字段兼容）。\n"
-    "其余类别给出 zh（中文意思）、ipa（能判断时给短语音标）和 role（它在这句里起什么作用）。\n"
+    "读者点到块内任意字符都会看到该块的释义，因此多词术语、固定搭配等必须把对应词连续写在同一块的 text 里。\n"
+    "颗粒度（必须遵守）：\n"
+    "1. 独立词：每个在句中可单独理解的英文词（含 a/the/is/and 等功能词）默认单独成块，用 category=word，给出 zh、ipa，以及 en 与 simple_en（CEFR B1-B2 常用词写的简短英文解释）。\n"
+    "2. 固定搭配：仅当 2–6 个词必须连在一起理解（如 depend on、in contrast、as well as）时合并为 category=collocation；"
+    "role 用中文说明它和句中哪几个词绑定（例如「与后面的 on … 连用」），不要写成整句翻译。\n"
+    "3. 多词术语/名词短语：论文里的专有名词、方法名、实体名等若由多个词组成（如 reinforcement learning、state transition model），"
+    "整个短语用 category=term 单独成块；点到短语里任意一个词都应显示整段 term 的 zh。\n"
+    "4. idiom、discourse（如 however / therefore）、pattern（仅 2–5 词的学术套路，如 we show that，不要整段从句）、abbreviation 按语义整块切出。\n"
+    "禁止：把半句、整句、长从句或「前面一大段」并成一个块；禁止为了省事少切块；禁止用 pattern 或 term 包裹整句做整句翻译。\n"
+    "类别只能是 word、term、collocation、idiom、discourse、pattern、abbreviation。"
+    "每个块都必须有 simple_en；除 word 外给出 zh 与 role（或缩写说明）。"
     "标点附在相邻块上。text 必须按顺序抄自原句，合起来覆盖每一个词。\n"
-    '只返回 JSON：{"sentences":[{"id":"原句 id","spans":[{"text":"...","category":"word","zh":"...","ipa":"...","en":"...","simple_en":"...","role":"..."}]}]}'
+    '只返回 JSON：{"sentences":[{"id":"原句 id","spans":[{"text":"...","category":"word","zh":"...","ipa":"...","en":"...","simple_en":"..."}]}]}'
 )
 
 _SIMPLE_EN_FALLBACKS = {
@@ -218,16 +223,33 @@ async def _cover(ai, batch: list[dict], units: list[dict], page_units_by_page: d
         raise GlossCoverageError("返回的句子和原文对不上")
     covered = []
     for unit in batch:
+        raw_spans = by_id[unit["id"]].get("spans") or []
+        _reject_overmerged_tiling(unit["text"], raw_spans)
         covered.extend(
             tile_sentence(
                 unit["text"],
-                by_id[unit["id"]].get("spans") or [],
+                raw_spans,
                 unit,
                 units,
                 page_units_by_page,
             )
         )
     return covered
+
+
+def _reject_overmerged_tiling(source: str, spans: list) -> None:
+    """Push the model away from whole-sentence gloss tiles."""
+    if not isinstance(spans, list) or not spans:
+        return
+    words = _words(source)
+    if len(words) < 8:
+        return
+    if len(spans) == 1:
+        raise GlossCoverageError("句子被合并成一块")
+    if len(spans) <= 3 and len(words) >= 12:
+        covered = sum(len(_words(item.get("text") or "")) for item in spans if isinstance(item, dict))
+        if covered >= max(len(words) - 2, int(len(words) * 0.85)):
+            raise GlossCoverageError("切块过粗")
 
 
 async def _fallback_unit(ai, unit: dict, units: list[dict], page_units_by_page: dict) -> list[dict]:
