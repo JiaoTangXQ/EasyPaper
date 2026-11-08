@@ -121,6 +121,8 @@ class ServerGuard:
         # Gloss worker uploads all spans in one JSON body (see gloss_worker_service.MAX_SPANS_BYTES).
         if path.startswith("/api/gloss-worker/jobs/") and path.endswith("/complete"):
             limit = 64 * 1024 * 1024
+        if path.startswith("/api/knowledge-worker/jobs/") and path.endswith("/complete"):
+            limit = 32 * 1024 * 1024
         try:
             if int(headers.get(b"content-length", b"0")) > limit:
                 return await reject(413, "请求内容超过大小限制")
@@ -134,7 +136,7 @@ class ServerGuard:
         self.large_active += int(large)
         try:
             public = {"/api/auth/login", "/api/auth/register", "/api/auth/features"}
-            worker_api = path.startswith("/api/gloss-worker/")
+            worker_api = path.startswith("/api/gloss-worker/") or path.startswith("/api/knowledge-worker/")
             if path.startswith("/api/") and path not in public and not worker_api and method != "OPTIONS":
                 value = headers.get(b"authorization", b"").decode("latin-1")
                 scheme, _, token = value.partition(" ")

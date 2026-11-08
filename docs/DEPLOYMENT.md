@@ -292,6 +292,24 @@ python -m app.cli gloss-worker --base-url "$EASYPAPER_SERVER_URL" --token "$GLOS
 - **生产安全**：worker 接口仅接受 `Authorization: Bearer <GLOSS_WORKER_TOKEN>`；令牌泄露等同于允许代写点读数据，请轮换令牌并限制网络访问。
 - **租约**：默认 900 秒，worker 处理期间会 heartbeat；服务器重启后未完成任务会重新排队。
 
+## 本机知识整理处理器（第二条 knowledge 链路）
+
+默认仍在 **服务器 backend** 内调用 AI 整理知识（`processing.knowledge_preparation: server`）。
+仅在你愿意把 LLM 算力放到一台受信任的本机时，可启用第二条链路（与点读 worker 独立）：
+
+1. 服务器 `.env`：
+   - `EASYPAPER_KNOWLEDGE_PREPARATION=remote_worker`
+   - `KNOWLEDGE_WORKER_TOKEN=`（`openssl rand -hex 32`，勿提交 Git；可与 `GLOSS_WORKER_TOKEN` 相同以简化本机配置）
+2. 重新部署 backend。
+3. 本机配置本地 AI（API 或 Cursor），并发建议：
+   - `EASYPAPER_KNOWLEDGE_CONCURRENCY=6`（篇内 chunk 并行）
+   - `EASYPAPER_CURSOR_MAX_CONCURRENT=4`（本机 Cursor 槽位）
+4. macOS LaunchAgent 默认已改为 `local-worker`，同时轮询点读与知识任务；也可单独运行
+   `python -m app.cli knowledge-worker`。
+
+用户在「知识库」点击 **开始整理** 后，服务器仅排队并下发 PDF；本机跑完整提取流水线并回传 JSON。
+未设置 `EASYPAPER_KNOWLEDGE_PREPARATION=remote_worker` 时，GitHub 默认自托管部署行为与升级前一致。
+
 ## 阿里云镜像下载缓慢时
 
 可在可联网的构建机器上，按 ECS 架构构建镜像，推送到你自己的阿里云 ACR 私有仓库。

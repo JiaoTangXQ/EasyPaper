@@ -158,37 +158,101 @@ class KnowledgeExtractor:
             session.refresh(paper)
 
         try:
-            try:
-                reading_document = parse_document(pdf_bytes)
-            except Exception:
-                # OCR-only or malformed PDFs can still use the legacy text pipeline.
-                reading_document = None
-            knowledge = await self._run_pipeline(pdf_bytes, paper_id, user_id, reading_document)
-            if reading_document:
-                knowledge = validate_evidence(knowledge, reading_document["blocks"])
-            paper.knowledge_json = json.dumps(knowledge, ensure_ascii=False)
-            paper.title = knowledge.get("metadata", {}).get("title", "")
-            paper.doi = knowledge.get("metadata", {}).get("doi")
-            paper.arxiv_id = knowledge.get("metadata", {}).get("arxiv_id")
-            paper.year = knowledge.get("metadata", {}).get("year")
-            paper.venue = knowledge.get("metadata", {}).get("venue")
-            paper.extraction_status = "completed"
-            paper.updated_at = datetime.utcnow()
-            self._save_paper(paper)
+            knowledge = await self.build_knowledge(pdf_bytes, paper_id, user_id)
+            paper = self.apply_knowledge(paper_id, user_id, knowledge)
             logger.info("知识提取完成: %s - %s", paper_id, paper.title)
             return paper
         except Exception as exc:
             logger.exception("知识提取失败: %s", exc)
-            paper.extraction_status = "error"
-            paper.extraction_error = str(exc)
-            paper.updated_at = datetime.utcnow()
-            self._save_paper(paper)
+            with Session(engine) as session:
+                failed = session.get(PaperKnowledge, paper_id)
+                if failed:
+                    failed.extraction_status = "error"
+                    failed.extraction_error = str(exc)
+                    failed.updated_at = datetime.utcnow()
+                    session.add(failed)
+                    session.commit()
             raise
 
+    async def build_knowledge(
+        self,
+        pdf_bytes: bytes,
+        paper_id: str,
+        user_id: int,
+        *,
+        on_progress=None,
+    ) -> dict:
+        """Run the LLM pipeline without persisting (for local workers)."""
+        try:
+            reading_document = parse_document(pdf_bytes)
+        except Exception:
+            reading_document = None
+        knowledge = await self._run_pipeline(
+            pdf_bytes,
+            paper_id,
+            user_id,
+            reading_document,
+            persist_indexes=False,
+            on_progress=on_progress,
+        )
+        if reading_document:
+            knowledge = validate_evidence(knowledge, reading_document["blocks"])
+        return knowledge
+
+    def apply_knowledge(
+        self,
+        paper_id: str,
+        user_id: int,
+        knowledge: dict,
+        *,
+        db_engine=None,
+    ) -> PaperKnowledge:
+        """Persist extracted knowledge JSON and index tables."""
+        db = db_engine or engine
+        metadata = knowledge.get("metadata") or {}
+        with Session(db) as session:
+            paper = session.get(PaperKnowledge, paper_id)
+            if paper is None:
+                raise ValueError(f"PaperKnowledge {paper_id} not found")
+            paper.knowledge_json = json.dumps(knowledge, ensure_ascii=False)
+            paper.title = metadata.get("title") or paper.title or ""
+            paper.doi = metadata.get("doi")
+            paper.arxiv_id = metadata.get("arxiv_id")
+            paper.year = metadata.get("year")
+            paper.venue = metadata.get("venue")
+            paper.extraction_status = "completed"
+            paper.extraction_error = None
+            paper.extraction_model = knowledge.get("extraction_model") or self.model
+            paper.updated_at = datetime.utcnow()
+            session.add(paper)
+            session.commit()
+            session.refresh(paper)
+        self._save_index_tables(
+            paper_id,
+            user_id,
+            knowledge.get("entities") or [],
+            knowledge.get("relationships") or [],
+            knowledge.get("flashcards") or [],
+            db_engine=db,
+        )
+        return paper
+
     async def _run_pipeline(
-        self, pdf_bytes: bytes, paper_id: str, user_id: int, reading_document: dict | None = None
+        self,
+        pdf_bytes: bytes,
+        paper_id: str,
+        user_id: int,
+        reading_document: dict | None = None,
+        *,
+        persist_indexes: bool = True,
+        on_progress=None,
     ) -> dict:
         """执行提取流水线的各阶段。"""
+        async def _report(done: int, total: int) -> None:
+            if on_progress:
+                await on_progress(done, total)
+
+        stage = 0
         # 1. 提取 PDF 全文
         pages_text = self._extract_text(pdf_bytes)
         full_text = "\n\n".join(pages_text)
@@ -198,9 +262,11 @@ class KnowledgeExtractor:
         # 2. 提取 metadata（前2页）
         first_pages = "\n\n".join(pages_text[:2])
         metadata = await self._llm_call(METADATA_PROMPT, first_pages, "metadata")
+        stage += 1
 
         # 3. 识别 section 结构
         sections_data = await self._llm_call(SECTIONS_PROMPT, full_text[:20000], "sections")
+        stage += 1
         sections = sections_data.get("sections", [])
         if reading_document and reading_document.get("sections"):
             summaries = {str(sec.get("title", "")).lower(): sec.get("summary", "") for sec in sections}
@@ -222,6 +288,10 @@ class KnowledgeExtractor:
         # 4. 并发提取实体和关系（按 section 分块）。遍历全部 chunk，确保整篇正文
         # 都参与抽取——不要再与 sections 做 zip（会截断丢文本）。
         chunks = self._select_chunks(full_text, sections)
+        entity_steps = max(1, len(chunks))
+        progress_total = 4 + entity_steps
+        await _report(stage, progress_total)
+
         all_entities: list[dict] = []
         all_relationships: list[dict] = []
 
@@ -234,15 +304,18 @@ class KnowledgeExtractor:
         tasks = [extract_chunk(chunk) for chunk in chunks]
 
         if not tasks:
-            # 如果没有足够的 section 分块，对全文做一次提取
             result = await self._llm_call(ENTITY_RELATIONSHIP_PROMPT, full_text[:6000], "entities")
             all_entities.extend(result.get("entities", []))
             all_relationships.extend(result.get("relationships", []))
+            stage += 1
+            await _report(stage, progress_total)
         else:
             for coro in asyncio.as_completed(tasks):
                 result = await coro
                 all_entities.extend(result.get("entities", []))
                 all_relationships.extend(result.get("relationships", []))
+                stage += 1
+                await _report(stage, progress_total)
 
         # 去重实体
         entities = self._deduplicate_entities(all_entities)
@@ -265,6 +338,8 @@ class KnowledgeExtractor:
         relationships = [r for r in all_relationships if r.get("source_entity_id") and r.get("target_entity_id")]
 
         # 5. 提取 findings + methods + datasets
+        stage += 1
+        await _report(stage, progress_total)
         findings_data = await self._llm_call(FINDINGS_PROMPT, full_text[:20000], "findings")
         findings = findings_data.get("findings", [])
         for _i, f in enumerate(findings):
@@ -277,7 +352,11 @@ class KnowledgeExtractor:
             {"entities": entities[:15], "findings": findings[:10]},
             ensure_ascii=False,
         )
+        stage += 1
+        await _report(stage, progress_total)
         flashcards_data = await self._llm_call(FLASHCARD_PROMPT, flashcard_context, "flashcards")
+        stage += 1
+        await _report(stage, progress_total)
         flashcards = flashcards_data.get("flashcards", [])
         for fc in flashcards:
             fc["id"] = _gen_id("fc")
@@ -304,8 +383,8 @@ class KnowledgeExtractor:
             "extraction_model": self.model,
         }
 
-        # 8. 存入索引表
-        self._save_index_tables(paper_id, user_id, entities, relationships, flashcards)
+        if persist_indexes:
+            self._save_index_tables(paper_id, user_id, entities, relationships, flashcards)
 
         return knowledge
 
@@ -431,9 +510,12 @@ class KnowledgeExtractor:
         entities: list[dict],
         relationships: list[dict],
         flashcards: list[dict],
+        *,
+        db_engine=None,
     ) -> None:
         """将实体、关系、闪卡存入索引表。"""
-        with Session(engine) as session:
+        db = db_engine or engine
+        with Session(db) as session:
             for ent in entities:
                 session.merge(
                     KnowledgeEntity(

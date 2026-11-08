@@ -67,12 +67,23 @@ class GlossWorkerConfig(BaseModel):
     lease_seconds: int = Field(900, ge=60, le=86400, alias="lease_seconds")
 
 
+class KnowledgeWorkerConfig(BaseModel):
+    token: str = Field("", alias="token")
+    lease_seconds: int = Field(3600, ge=120, le=86400, alias="lease_seconds")
+
+
 class ProcessingConfig(BaseModel):
     max_pages: int = Field(100, ge=1, le=500, alias="max_pages")
     max_upload_mb: int = Field(50, ge=1, le=128, alias="max_upload_mb")
     gloss_preparation: Literal["server", "remote_worker", "user_choice"] = Field(
         "server",
         alias="gloss_preparation",
+    )
+    # server: run knowledge extraction on the backend (default for self-hosted).
+    # remote_worker: queue jobs for a trusted local worker (requires knowledge_worker.token).
+    knowledge_preparation: Literal["server", "remote_worker"] = Field(
+        "server",
+        alias="knowledge_preparation",
     )
     max_concurrent: int = Field(3, ge=1, le=8, alias="max_concurrent")
     # Paragraph requests per document; independent of the concurrent document limit.
@@ -125,6 +136,7 @@ class AppConfig(BaseModel):
     llm: LLMConfig
     processing: ProcessingConfig = ProcessingConfig()
     gloss_worker: GlossWorkerConfig = Field(default_factory=GlossWorkerConfig)
+    knowledge_worker: KnowledgeWorkerConfig = Field(default_factory=KnowledgeWorkerConfig)
     storage: StorageConfig = StorageConfig()
     logging: LoggingConfig = LoggingConfig()
     database: DatabaseConfig = DatabaseConfig()
@@ -224,6 +236,12 @@ def get_config() -> AppConfig:
         raw.setdefault("gloss_worker", {})["token"] = token
     if lease := os.getenv("EASYPAPER_GLOSS_WORKER_LEASE_SECONDS"):
         raw.setdefault("gloss_worker", {})["lease_seconds"] = lease
+    if kbase := os.getenv("EASYPAPER_KNOWLEDGE_PREPARATION"):
+        raw.setdefault("processing", {})["knowledge_preparation"] = kbase
+    if token := os.getenv("KNOWLEDGE_WORKER_TOKEN"):
+        raw.setdefault("knowledge_worker", {})["token"] = token
+    if lease := os.getenv("EASYPAPER_KNOWLEDGE_WORKER_LEASE_SECONDS"):
+        raw.setdefault("knowledge_worker", {})["lease_seconds"] = lease
     if os.getenv("APP_ENV", "").lower() in {"production", "prod"}:
         raw.setdefault("security", {}).update(allow_registration=False, local_sync_enabled=False)
         raw.setdefault("agent", {}).update(enabled=False, api_keys=[])
@@ -236,6 +254,15 @@ def get_config() -> AppConfig:
             )
         logger.warning(
             "Gloss remote worker is enabled but gloss_worker.token is empty; remote jobs cannot be claimed."
+        )
+    if config.processing.knowledge_preparation == "remote_worker" and not config.knowledge_worker.token.strip():
+        if os.getenv("APP_ENV", "").lower() in {"production", "prod"}:
+            raise RuntimeError(
+                "Refusing to start in production: knowledge_preparation=remote_worker requires knowledge_worker.token "
+                "(set KNOWLEDGE_WORKER_TOKEN or knowledge_worker.token in config)."
+            )
+        logger.warning(
+            "Knowledge remote worker is enabled but knowledge_worker.token is empty; remote jobs cannot be claimed."
         )
 
     # Validate critical settings at startup (fail-fast in production).

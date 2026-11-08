@@ -19,6 +19,7 @@ from .api.auth import router as auth_router
 from .api.settings_routes import router as settings_router
 from .api.knowledge_routes import create_knowledge_router
 from .api.gloss_worker_routes import create_gloss_worker_router
+from .api.knowledge_worker_routes import create_knowledge_worker_router
 from .api.reader_routes import create_reader_router
 from .api.reading_routes import create_reading_router
 from .api.routes import create_router
@@ -29,6 +30,7 @@ from .mcp.server import create_mcp_server
 from .services.ai_client import AIClient
 from .services.document_processor import DocumentProcessor
 from .services.gloss_worker_service import GlossWorkerService
+from .services.knowledge_worker_service import KnowledgeWorkerService
 from .services.job_queue import JobQueue
 from .services.knowledge_extractor import KnowledgeExtractor
 from .services.reading_service import ReadingService
@@ -69,6 +71,11 @@ gloss_worker_service = GlossWorkerService(
     engine=engine,
     task_manager=task_manager,
     synced_reader=reading_service.synced_reader,
+)
+knowledge_worker_service = KnowledgeWorkerService(
+    config=config,
+    engine=engine,
+    extractor=knowledge_extractor,
 )
 artifact_service = TranslationArtifactService(task_manager=task_manager)
 mcp_server = create_mcp_server(
@@ -123,7 +130,10 @@ app.include_router(
 )
 app.include_router(create_router(task_manager, processor, reading_service, job_queue, gloss_worker_service))
 app.include_router(create_gloss_worker_router(gloss_worker_service))
-app.include_router(create_knowledge_router(knowledge_extractor, job_queue))
+app.include_router(create_knowledge_worker_router(knowledge_worker_service))
+app.include_router(
+    create_knowledge_router(knowledge_extractor, job_queue, knowledge_worker_service=knowledge_worker_service)
+)
 app.include_router(create_reading_router(reading_service))
 app.include_router(create_reader_router(reading_service))
 app.router.routes.extend(mcp_server.streamable_http_app().routes)
@@ -149,6 +159,7 @@ async def on_startup() -> None:
     from .models.reading import ReaderBuild
 
     gloss_worker_service.recover_after_restart()
+    knowledge_worker_service.recover_after_restart()
     with Session(engine) as session:
         for build in session.exec(select(ReaderBuild).where(ReaderBuild.status == "running")).all():
             if build.kind == "gloss":

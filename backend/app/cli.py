@@ -60,6 +60,31 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--token", default=os.getenv("GLOSS_WORKER_TOKEN", ""))
     worker.add_argument("--label", default=os.getenv("EASYPAPER_GLOSS_WORKER_LABEL", "local-worker"))
     worker.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5")))
+    know = sub.add_parser("knowledge-worker", help="Run a trusted local knowledge extraction worker")
+    know.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
+    know.add_argument("--token", default=os.getenv("KNOWLEDGE_WORKER_TOKEN", ""))
+    know.add_argument("--label", default=os.getenv("EASYPAPER_KNOWLEDGE_WORKER_LABEL", "local-knowledge-worker"))
+    know.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_KNOWLEDGE_WORKER_POLL_SECONDS", "5")))
+    local = sub.add_parser("local-worker", help="Run gloss and knowledge workers together (Mac)")
+    local.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
+    local.add_argument("--gloss-token", default=os.getenv("GLOSS_WORKER_TOKEN", ""))
+    local.add_argument(
+        "--knowledge-token",
+        default=os.getenv("KNOWLEDGE_WORKER_TOKEN", "") or os.getenv("GLOSS_WORKER_TOKEN", ""),
+    )
+    local.add_argument("--gloss-label", default=os.getenv("EASYPAPER_GLOSS_WORKER_LABEL", "local-worker"))
+    local.add_argument(
+        "--knowledge-label",
+        default=os.getenv("EASYPAPER_KNOWLEDGE_WORKER_LABEL", "local-knowledge-worker"),
+    )
+    local.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5")))
+    local.add_argument(
+        "--knowledge",
+        dest="knowledge_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Poll knowledge-worker jobs (default on; disable for gloss-only)",
+    )
     args = parser.parse_args(argv)
     from .core.db import engine, init_db
 
@@ -73,6 +98,35 @@ def main(argv: list[str] | None = None) -> int:
                 token=args.token,
                 worker_label=args.label,
                 poll_seconds=args.poll_seconds,
+            )
+        except (ValueError, KeyboardInterrupt) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    if args.command == "knowledge-worker":
+        from .knowledge_worker.runner import run_worker as run_knowledge_worker
+
+        try:
+            return run_knowledge_worker(
+                base_url=args.base_url,
+                token=args.token,
+                worker_label=args.label,
+                poll_seconds=args.poll_seconds,
+            )
+        except (ValueError, KeyboardInterrupt) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    if args.command == "local-worker":
+        from .local_worker.runner import run_local_worker
+
+        try:
+            return run_local_worker(
+                base_url=args.base_url,
+                gloss_token=args.gloss_token,
+                knowledge_token=args.knowledge_token,
+                gloss_label=args.gloss_label,
+                knowledge_label=args.knowledge_label,
+                poll_seconds=args.poll_seconds,
+                knowledge_enabled=args.knowledge_enabled,
             )
         except (ValueError, KeyboardInterrupt) as exc:
             print(f"error: {exc}", file=sys.stderr)

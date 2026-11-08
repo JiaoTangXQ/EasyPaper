@@ -32,6 +32,8 @@ from ..models.user import User
 from ..services.job_queue import JobQueue
 from ..services.knowledge_export import to_bibtex
 from ..services.knowledge_extractor import KnowledgeExtractor
+from ..services.knowledge_preparation import remote_worker_ready, resolve_knowledge_preparation
+from ..services.knowledge_worker_service import KnowledgeWorkerService
 from ..services.obsidian_sync import ObsidianSyncService, get_obsidian_sync_lock
 from .deps import get_current_user
 
@@ -112,7 +114,11 @@ def _ensure_extracting_paper(
     return paper, True
 
 
-def create_knowledge_router(extractor: KnowledgeExtractor, job_queue=None) -> APIRouter:
+def create_knowledge_router(
+    extractor: KnowledgeExtractor,
+    job_queue=None,
+    knowledge_worker_service: KnowledgeWorkerService | None = None,
+) -> APIRouter:
     router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
     queue = job_queue or JobQueue(get_config().processing)
     extraction_slots = asyncio.Semaphore(get_config().processing.max_concurrent)
@@ -225,7 +231,16 @@ def create_knowledge_router(extractor: KnowledgeExtractor, job_queue=None) -> AP
         if not started:
             return {"paper_id": paper_id, "status": "extracting"}
 
-        # 异步执行提取
+        prep = resolve_knowledge_preparation(get_config())
+        if prep == "remote_worker":
+            if knowledge_worker_service is None:
+                raise HTTPException(status_code=503, detail="本机知识整理处理器未启用")
+            if not remote_worker_ready(get_config()):
+                raise HTTPException(status_code=503, detail="服务器未配置本机知识整理令牌，请联系管理员")
+            knowledge_worker_service.enqueue(task_id=task_id, paper_id=paper_id, user_id=user.id)
+            return {"paper_id": paper_id, "status": "extracting"}
+
+        # 异步执行提取（服务器默认链路）
         async def _do_extract():
             try:
                 async with extraction_slots:

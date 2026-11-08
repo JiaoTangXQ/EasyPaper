@@ -40,6 +40,9 @@ storage:
         encoding="utf-8",
     )
     monkeypatch.setenv("APP_CONFIG_PATH", str(cfg_path))
+    monkeypatch.delenv("GLOSS_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("EASYPAPER_KNOWLEDGE_PREPARATION", raising=False)
     get_config.cache_clear()
     cfg = get_config()
     task_manager = TaskManager(ttl_minutes=30)

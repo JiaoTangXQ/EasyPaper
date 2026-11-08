@@ -39,6 +39,8 @@ fi
 export APP_CONFIG_PATH="${APP_CONFIG_PATH:-${BACKEND}/config/config.yaml}"
 export EASYPAPER_SERVER_URL="${EASYPAPER_SERVER_URL:?}"
 export EASYPAPER_GLOSS_CONCURRENCY="${EASYPAPER_GLOSS_CONCURRENCY:-4}"
+export EASYPAPER_KNOWLEDGE_CONCURRENCY="${EASYPAPER_KNOWLEDGE_CONCURRENCY:-6}"
+export KNOWLEDGE_WORKER_TOKEN="${KNOWLEDGE_WORKER_TOKEN:-${TOKEN}}"
 export EASYPAPER_AI_PROVIDER="${EASYPAPER_AI_PROVIDER:-cursor}"
 export EASYPAPER_CURSOR_EXECUTABLE="${EASYPAPER_CURSOR_EXECUTABLE:-${HOME}/.local/bin/cursor-j}"
 export EASYPAPER_CURSOR_MODEL="${EASYPAPER_CURSOR_MODEL:-grok-4.7-high-fast}"
@@ -52,8 +54,10 @@ LABEL="${GLOSS_WORKER_LABEL:-mac-worker}"
 POLL="${EASYPAPER_GLOSS_WORKER_POLL_SECONDS:-5}"
 
 cd "${BACKEND}"
-exec "${VENV}" -m app.cli gloss-worker \
+exec "${VENV}" -m app.cli local-worker \
   --base-url "${EASYPAPER_SERVER_URL}" \
-  --token "${GLOSS_WORKER_TOKEN}" \
-  --label "${LABEL}" \
+  --gloss-token "${GLOSS_WORKER_TOKEN}" \
+  --knowledge-token "${KNOWLEDGE_WORKER_TOKEN}" \
+  --gloss-label "${LABEL}" \
+  --knowledge-label "${LABEL}-knowledge" \
   --poll-seconds "${POLL}"

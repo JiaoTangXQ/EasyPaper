@@ -14,6 +14,7 @@ def engine_fixture():
         task,  # noqa: F401
         reading,  # noqa: F401
         gloss_worker,  # noqa: F401
+        knowledge_worker,  # noqa: F401
         user,  # noqa: F401
     )
 
