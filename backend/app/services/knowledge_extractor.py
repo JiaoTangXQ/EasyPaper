@@ -135,15 +135,27 @@ class KnowledgeExtractor:
         if paper_id is None:
             paper_id = _gen_id("pk")
 
-        # 创建初始记录
-        paper = PaperKnowledge(
-            id=paper_id,
-            task_id=task_id,
-            user_id=user_id,
-            extraction_status="extracting",
-            extraction_model=self.model,
-        )
-        self._save_paper(paper)
+        with Session(engine) as session:
+            paper = session.get(PaperKnowledge, paper_id)
+            if paper is None:
+                paper = PaperKnowledge(
+                    id=paper_id,
+                    task_id=task_id,
+                    user_id=user_id,
+                    extraction_status="extracting",
+                    extraction_model=self.model,
+                )
+                session.add(paper)
+            else:
+                # merge() on a sparse model would wipe title/metadata set when the
+                # reader workspace first registered this paper.
+                paper.extraction_status = "extracting"
+                paper.extraction_model = self.model
+                paper.extraction_error = None
+                paper.updated_at = datetime.utcnow()
+                session.add(paper)
+            session.commit()
+            session.refresh(paper)
 
         try:
             try:

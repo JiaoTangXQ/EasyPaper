@@ -88,16 +88,21 @@ def _ensure_extracting_paper(
         existing.extraction_status = "extracting"
         existing.extraction_error = None
         existing.extraction_model = extraction_model
+        fallback = (getattr(task, "filename", None) or "").strip()
+        if not (existing.title or "").strip() and fallback:
+            existing.title = fallback
         existing.updated_at = datetime.utcnow()
         session.add(existing)
         session.commit()
         session.refresh(existing)
         return existing, True
 
+    title = (task.filename or "").strip() if hasattr(task, "filename") else ""
     paper = PaperKnowledge(
         id=f"pk_{uuid.uuid4().hex[:12]}",
         task_id=task.task_id,
         user_id=user_id,
+        title=title,
         extraction_status="extracting",
         extraction_model=extraction_model,
     )
