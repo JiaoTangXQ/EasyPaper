@@ -33,6 +33,7 @@ import {
   type SharedAnnotation,
 } from "@/components/reader/reader-store";
 import { useSyncedReader } from "@/components/reader/useSyncedReader";
+import { useGlossSpans } from "@/components/reader/useGlossSpans";
 import { useFullscreenChrome } from "@/components/reader/useFullscreenChrome";
 import { useUserPreferences } from "@/lib/preferences";
 import "@/components/reader/reader.css";
@@ -82,7 +83,6 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [glossSpans, setGlossSpans] = useState<GlossSpan[] | null>(null);
   const [restoring, setRestoring] = useState(false);
   const restoreInput = useRef<HTMLInputElement>(null);
   const viewerRef = useRef<PdfViewerHandle>(null);
@@ -98,6 +98,12 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
   const versionId = version?.id,
     versionUrl = version?.url,
     pageCount = version?.page_count;
+  const { glossSpans, glossBooting, updateGlossSpan } = useGlossSpans(
+    bundle?.document_id,
+    glossReady,
+    page,
+    pageCount || 0,
+  );
   const userId = bundle?.user_id;
   const versionRef = useRef(version);
   versionRef.current = version;
@@ -149,25 +155,6 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
       cancelled = true;
     };
   }, [taskId]);
-
-  useEffect(() => {
-    if (mode !== "gloss" || !glossReady || !bundle) {
-      setGlossSpans(null);
-      return;
-    }
-    let cancelled = false;
-    void api
-      .get<{ spans: GlossSpan[] }>(`/api/reader/documents/${bundle.document_id}/gloss`)
-      .then(({ data }) => {
-        if (!cancelled) setGlossSpans(data.spans);
-      })
-      .catch((err) => {
-        if (!cancelled) toast.error(getApiErrorMessage(err, "点读释义加载失败"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, glossReady, bundle?.document_id]);
 
   useEffect(() => {
     if (!awaitingResult) return;
@@ -232,31 +219,37 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
     setPdfError("");
     setSelection("");
     const cacheKey = `pdf:${userId}:${versionId}`;
+    const openBlob = (blob: Blob) => {
+      const remembered = cacheGet<number>(`position:${userId}:${versionId}`);
+      void remembered.then((stored) => {
+        if (cancelled) return;
+        const next = Math.max(
+          1,
+          Math.min(
+            pageCount,
+            requestedJump.current?.versionId === versionId
+              ? requestedJump.current.page
+              : positions.current.get(versionId) || stored || 1,
+          ),
+        );
+        if (url) URL.revokeObjectURL(url);
+        url = URL.createObjectURL(blob);
+        setPage(next);
+        setPdf({ versionId, url, page: next });
+      });
+    };
     void (async () => {
+      const cached = await cacheGet<Blob>(cacheKey).catch(() => undefined);
+      if (cached && !cancelled) openBlob(cached);
       let blob: Blob;
       try {
         blob = (await api.get<Blob>(versionUrl, { responseType: "blob" })).data;
-        // Offline PDF caching is optional; annotation operations have their own durable store.
         void cacheSet(cacheKey, blob).catch(() => undefined);
       } catch (error) {
-        const cached = await cacheGet<Blob>(cacheKey).catch(() => undefined);
-        if (!cached) throw error;
-        blob = cached;
+        if (cached) return;
+        throw error;
       }
-      const remembered = await cacheGet<number>(`position:${userId}:${versionId}`).catch(() => undefined);
-      if (cancelled) return;
-      const next = Math.max(
-        1,
-        Math.min(
-          pageCount,
-          requestedJump.current?.versionId === versionId
-            ? requestedJump.current.page
-            : positions.current.get(versionId) || remembered || 1,
-        ),
-      );
-      url = URL.createObjectURL(blob);
-      setPage(next);
-      setPdf({ versionId, url, page: next });
+      if (!cancelled) openBlob(blob);
     })().catch((err) => {
       if (!cancelled) setPdfError(getApiErrorMessage(err, "PDF 加载失败，请重新打开此版本"));
     });
@@ -350,15 +343,13 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
         const { data } = await api.post<GlossSpan>(
           `/api/reader/documents/${bundle.document_id}/gloss/${span.id}/enrich`,
         );
-        setGlossSpans((current) =>
-          current?.map((item) => (item.id === data.id ? { ...item, ...data } : item)) || current,
-        );
+        updateGlossSpan(data);
         return data;
       } catch {
         return null;
       }
     },
-    [bundle?.document_id],
+    [bundle?.document_id, updateGlossSpan],
   );
   const download = async (path: string, name: string) => {
     try {
@@ -670,7 +661,7 @@ function ReaderWorkspace({ taskId }: { taskId: string }) {
             ) : (
               <div className="pdf-loading">
                 <Loader2 className="spin" size={22} />
-                正在打开完整页面…
+                {mode === "gloss" && glossBooting ? "正在准备点读数据（优先加载当前页）…" : "正在打开完整页面…"}
               </div>
             )}
           </div>

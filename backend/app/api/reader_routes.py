@@ -90,8 +90,25 @@ def create_reader_router(reading):
         return {"units": public_units(json.loads(version.index_json))}
 
     @router.get("/documents/{document_id}/gloss")
-    async def gloss(document_id: str, user: User = Depends(get_current_user)):
+    async def gloss(
+        document_id: str,
+        user: User = Depends(get_current_user),
+        scope: Literal["full", "meta", "pages"] = "full",
+        pages: str = "",
+    ):
         service.owned(document_id, user.id)
+        if scope == "meta":
+            return service.gloss_payload(document_id, meta_only=True)
+        if scope == "pages":
+            if not pages.strip():
+                raise HTTPException(422, "pages 不能为空")
+            try:
+                page_list = [int(part) for part in pages.split(",") if part.strip() != ""]
+            except ValueError as exc:
+                raise HTTPException(422, "pages 必须是逗号分隔的页码") from exc
+            if len(page_list) > 64:
+                raise HTTPException(422, "单次最多请求 64 页点读数据")
+            return service.gloss_payload(document_id, pages=page_list)
         return service.gloss_payload(document_id)
 
     @router.post("/documents/{document_id}/gloss/{span_id}/enrich")

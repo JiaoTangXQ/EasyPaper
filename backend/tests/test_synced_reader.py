@@ -3043,6 +3043,17 @@ def test_gloss_mode_prepares_a_span_for_every_original_sentence(reader):
     gloss = reader.client.get(f"/api/reader/documents/{document_id}/gloss").json()
     assert gloss["status"] == "completed"
     assert gloss["spans"]
+    meta = reader.client.get(f"/api/reader/documents/{document_id}/gloss", params={"scope": "meta"}).json()
+    assert meta["span_count"] == len(gloss["spans"])
+    assert meta["digest"]
+    page = meta["pages"][0]
+    partial = reader.client.get(
+        f"/api/reader/documents/{document_id}/gloss",
+        params={"scope": "pages", "pages": str(page)},
+    ).json()
+    assert partial["digest"] == meta["digest"]
+    assert partial["spans"]
+    assert all(item.get("page") == page for item in partial["spans"])
     assert gloss["spans"][0]["label"] == "学术句式"
     assert gloss["spans"][0]["role"] == "陈述这一句"
     assert "anchor" in gloss["spans"][0]
