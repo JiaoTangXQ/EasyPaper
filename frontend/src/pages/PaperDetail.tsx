@@ -78,6 +78,7 @@ const PaperDetail = () => {
   const [loadError, setLoadError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [obsidianSyncing, setObsidianSyncing] = useState(false);
+  const [startingExtract, setStartingExtract] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +90,7 @@ const PaperDetail = () => {
         if (cancelled) return;
         setPaper(data);
         setLoadError("");
-        if (!data.metadata && !["error", "failed"].includes(data.extraction_status))
+        if (!data.metadata && data.extraction_status === "extracting")
           timer = setTimeout(fetchPaper, 4000);
       } catch (error) {
         if (!cancelled) setLoadError(getApiErrorMessage(error, "无法加载论文知识，请重试。"));
@@ -177,20 +178,43 @@ const PaperDetail = () => {
   }
 
   if (!paper.metadata) {
+    const failed = ["error", "failed"].includes(paper.extraction_status || "");
+    const extracting = paper.extraction_status === "extracting";
+    const pending = paper.extraction_status === "pending" || !paper.extraction_status;
     return (
       <div className="flex min-h-[calc(100vh-8rem)] flex-col items-center justify-center gap-4 text-center">
-        {paper.extraction_status !== "error" && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+        {extracting && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
         <h1 className="text-xl font-semibold">
-          {paper.extraction_status === "error" ? "知识整理失败" : "知识正在整理"}
+          {failed ? "知识整理失败" : extracting ? "知识正在整理" : "尚未整理知识笔记"}
         </h1>
         <p className="max-w-md text-sm text-muted-foreground">
-          {paper.extraction_status === "error"
-            ? "请返回知识笔记列表重新整理。"
-            : "发现、概念和复习卡会在完成后自动显示，可先返回阅读。"}
+          {failed
+            ? "请返回知识笔记列表重新整理，或在下方重试。"
+            : extracting
+              ? "发现、概念和复习卡会在完成后自动显示，可先返回阅读。"
+              : "打开过阅读的论文会先出现在这里；需要你在仪表盘或本页主动发起整理，服务器才会用 AI 提取知识。"}
         </p>
         <Button variant="outline" onClick={() => navigate("/knowledge")}>
           返回知识笔记
         </Button>
+        {paper.task_id && pending && (
+          <Button
+            disabled={startingExtract}
+            onClick={() => {
+              setStartingExtract(true);
+              void api
+                .post(`/api/knowledge/extract/${paper.task_id}`)
+                .then(() => {
+                  toast.success("已开始整理知识笔记。");
+                  setRefreshKey((key) => key + 1);
+                })
+                .catch((error) => toast.error(getApiErrorMessage(error, "无法开始整理。")))
+                .finally(() => setStartingExtract(false));
+            }}
+          >
+            {startingExtract ? "启动中…" : "开始整理"}
+          </Button>
+        )}
         {paper.task_id && (
           <Button onClick={() => navigate(`/reader/${paper.task_id}`)}>
             <BookOpenCheck className="mr-2 h-4 w-4" />

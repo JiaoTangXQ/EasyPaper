@@ -286,6 +286,10 @@ button.paper-title:hover {
   color: #a22e3d;
   background: #fff0f2;
 }
+.task-status.is-muted {
+  color: #6b6864;
+  background: #f0efec;
+}
 .continue-section {
   display: grid;
   gap: 13px;

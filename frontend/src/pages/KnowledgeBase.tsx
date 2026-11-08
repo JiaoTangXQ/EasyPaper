@@ -58,7 +58,7 @@ export default function KnowledgeBase() {
       setLoading(false);
     }
   }, []);
-  const processing = papers.some((p) => ["pending", "extracting"].includes(p.extraction_status));
+  const processing = papers.some((p) => p.extraction_status === "extracting");
   useEffect(() => {
     void fetchPapers();
   }, [fetchPapers]);
@@ -122,15 +122,15 @@ export default function KnowledgeBase() {
   };
 
   const filtered = papers.filter((p) => (p.title || "").toLowerCase().includes(search.trim().toLowerCase()));
-  const retry = async (paper: Paper) => {
+  const startExtract = async (paper: Paper, toastMessage: string) => {
     if (!paper.task_id || retrying) return;
     setRetrying(paper.id);
     try {
       await api.post(`/api/knowledge/extract/${paper.task_id}`);
       await fetchPapers();
-      toast.success("已重新开始整理。");
+      toast.success(toastMessage);
     } catch (err) {
-      toast.error(getApiErrorMessage(err, "重试失败。"));
+      toast.error(getApiErrorMessage(err, "整理失败。"));
     } finally {
       setRetrying("");
     }
@@ -207,7 +207,20 @@ export default function KnowledgeBase() {
           {filtered.length ? (
             <div className="paper-list">
               {filtered.map((paper) => {
-                const failed = ["error", "failed"].includes(paper.extraction_status);
+                const status = paper.extraction_status;
+                const failed = ["error", "failed"].includes(status);
+                const extracting = status === "extracting";
+                const pending = status === "pending";
+                const statusLabel =
+                  status === "completed"
+                    ? "已整理"
+                    : failed
+                      ? "整理失败"
+                      : extracting
+                        ? "正在整理知识"
+                        : "尚未整理";
+                const statusClass =
+                  status === "completed" ? "is-ready" : failed ? "is-error" : extracting ? "is-pending" : "is-muted";
                 return (
                   <article key={paper.id} className="paper-row">
                     <div className="paper-row-main">
@@ -217,11 +230,7 @@ export default function KnowledgeBase() {
                           {paper.title || "未命名论文"}
                         </button>
                         <div className="paper-meta">
-                          <span
-                            className={`task-status ${paper.extraction_status === "completed" ? "is-ready" : failed ? "is-error" : "is-pending"}`}
-                          >
-                            {paper.extraction_status === "completed" ? "已整理" : failed ? "整理失败" : "正在整理知识"}
-                          </span>
+                          <span className={`task-status ${statusClass}`}>{statusLabel}</span>
                           {paper.year && <span>{paper.year}</span>}
                           {paper.venue && <span>{paper.venue}</span>}
                         </div>
@@ -233,14 +242,16 @@ export default function KnowledgeBase() {
                         查看笔记
                         <ArrowRight />
                       </Button>
-                      {failed && paper.task_id && (
+                      {(pending || failed) && paper.task_id && (
                         <Button
                           size="sm"
                           variant="ghost"
                           disabled={Boolean(retrying)}
-                          onClick={() => void retry(paper)}
+                          onClick={() =>
+                            void startExtract(paper, pending ? "已开始整理知识笔记。" : "已重新开始整理。")
+                          }
                         >
-                          {retrying === paper.id ? "启动中…" : "重新整理"}
+                          {retrying === paper.id ? "启动中…" : pending ? "开始整理" : "重新整理"}
                         </Button>
                       )}
                       <DropdownMenu>
