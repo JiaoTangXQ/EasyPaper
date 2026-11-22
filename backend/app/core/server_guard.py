@@ -22,7 +22,7 @@ from ..models.usage import DailyUsage
 
 AI_OPERATION = re.compile(
     r"/api/(?:upload|upload-url|summary/[^/]+|tasks/[^/]+/(?:retry|title-translation)|knowledge/extract/[^/]+"
-    r"|reading/[^/]+/(?:ask|summary|blocks/[^/]+/(?:aid|explain))"
+    r"|reading/[^/]+/(?:ask|ask-image|summary|blocks/[^/]+/(?:aid|explain))"
     r"|reader/documents/[^/]+/(?:versions/[^/]+|annotations/[^/]+/align))/?$"
 )
 
@@ -116,10 +116,13 @@ class ServerGuard:
         limit = 16384 if path.startswith("/api/auth/") else 1024 * 1024
         if path == "/api/upload":
             limit = (self.config.processing.max_upload_mb + 1) * 1024 * 1024
+        if path.rstrip("/").endswith("/ask-image"):
+            # The image itself is limited to 4 MiB; leave room for multipart fields.
+            limit = 5 * 1024 * 1024
         if path.startswith("/api/reader/") and path.endswith("/restore"):
             limit = 129 * 1024 * 1024
         # Gloss worker uploads all spans in one JSON body (see gloss_worker_service.MAX_SPANS_BYTES).
-        if path.startswith("/api/gloss-worker/jobs/") and path.endswith("/complete"):
+        if path.startswith("/api/gloss-worker/jobs/") and path.endswith(("/checkpoint", "/complete")):
             limit = 64 * 1024 * 1024
         if path.startswith("/api/knowledge-worker/jobs/") and path.endswith("/complete"):
             limit = 32 * 1024 * 1024

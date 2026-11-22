@@ -1,11 +1,9 @@
 import { useState } from "react";
 import AuthLayout from "@/components/workspace/AuthLayout";
 import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
@@ -28,10 +26,11 @@ export default function Login() {
 
       const response = await api.post("/api/auth/login", formData);
       localStorage.setItem("token", response.data.access_token);
-      localStorage.setItem("email", email);
+      localStorage.setItem("email", email.trim().toLowerCase());
       navigate("/dashboard");
     } catch (error: unknown) {
-      toast.error(getApiErrorMessage(error, "登录失败，请检查邮箱和密码。"));
+      const message = getApiErrorMessage(error, "登录失败，请检查邮箱和密码。");
+      toast.error(/incorrect email or password/i.test(message) ? "邮箱或密码不正确。" : message);
     } finally {
       setLoading(false);
     }
@@ -39,57 +38,57 @@ export default function Login() {
 
   return (
     <AuthLayout>
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-2xl">登录</CardTitle>
-          <CardDescription>回到论文，继续上次的阅读。</CardDescription>
-        </CardHeader>
-        <form onSubmit={handleLogin}>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">邮箱</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="输入邮箱"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                autoComplete="current-password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col space-y-2">
-            <Button className="w-full" type="submit" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              登录
-            </Button>
-            <div className="text-sm text-center text-muted-foreground">
-              {features.registration ? (
-                <>
-                  没有账户？
-                  <Link to="/register" className="underline">
-                    注册
-                  </Link>
-                </>
-              ) : (
-                "账号由管理员开通，请联系管理员。"
-              )}
-            </div>
-          </CardFooter>
-        </form>
-      </Card>
+      <form className="auth-card" onSubmit={handleLogin}>
+        <div className="auth-card-header">
+          <h2>登录</h2>
+          <p>回到论文，继续上次的阅读。</p>
+        </div>
+        <div className="auth-fields">
+          <div>
+            <label className="ui-label" htmlFor="email">
+              邮箱
+            </label>
+            <Input
+              id="email"
+              className="ui-input--lg"
+              type="email"
+              placeholder="name@example.com"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="ui-label" htmlFor="password">
+              密码
+            </label>
+            <Input
+              id="password"
+              className="ui-input--lg"
+              autoComplete="current-password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+        </div>
+        <Button size="lg" type="submit" disabled={loading}>
+          {loading ? <Loader2 className="spin" /> : null}
+          登录
+          {!loading ? <ArrowRight /> : null}
+        </Button>
+        <p className="auth-footer">
+          {features.registration ? (
+            <>
+              没有账户？<Link to="/register">注册</Link>
+            </>
+          ) : (
+            "账号由管理员开通，请联系管理员。"
+          )}
+        </p>
+      </form>
     </AuthLayout>
   );
 }

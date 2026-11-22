@@ -7,6 +7,7 @@ import json
 import re
 from collections import OrderedDict, defaultdict
 from contextvars import ContextVar
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -131,16 +132,46 @@ class ReadingService:
 
     def ensure_paper(self, task: Task, title: str) -> PaperKnowledge:
         with Session(self.engine) as session:
-            paper = session.exec(
-                select(PaperKnowledge).where(
-                    PaperKnowledge.task_id == task.task_id, PaperKnowledge.user_id == task.user_id
-                )
-            ).first()
+            paper = None
+            if task.passport_id:
+                paper = session.exec(
+                    select(PaperKnowledge).where(
+                        PaperKnowledge.passport_id == task.passport_id,
+                        PaperKnowledge.user_id == task.user_id,
+                    )
+                ).first()
             if not paper:
-                paper = PaperKnowledge(id=f"pk_{task.task_id}", task_id=task.task_id, user_id=task.user_id, title=title)
+                paper = session.exec(
+                    select(PaperKnowledge).where(
+                        PaperKnowledge.task_id == task.task_id, PaperKnowledge.user_id == task.user_id
+                    )
+                ).first()
+            if not paper:
+                paper = PaperKnowledge(
+                    id=f"pk_{task.passport_id or task.task_id}",
+                    task_id=task.task_id,
+                    passport_id=task.passport_id,
+                    user_id=task.user_id,
+                    title=title,
+                )
                 session.add(paper)
-                session.commit()
-                session.refresh(paper)
+            else:
+                # Old rows are upgraded lazily when the reader is opened.
+                changed = False
+                if task.passport_id and paper.passport_id != task.passport_id:
+                    paper.passport_id = task.passport_id
+                    changed = True
+                if not paper.task_id:
+                    paper.task_id = task.task_id
+                    changed = True
+                if not paper.title and title:
+                    paper.title = title
+                    changed = True
+                if changed:
+                    paper.updated_at = datetime.utcnow()
+                    session.add(paper)
+            session.commit()
+            session.refresh(paper)
             return paper
 
     async def workspace(self, task: Task, user_id: int) -> dict:
@@ -148,7 +179,13 @@ class ReadingService:
         paper = self.ensure_paper(task, document["title"])
         with Session(self.engine) as session:
             state = session.get(ReadingState, f"{user_id}:{task.task_id}")
-            aids = session.exec(select(ReadingAid).where(ReadingAid.task_id == task.task_id)).all()
+            aids_statement = select(ReadingAid).where(ReadingAid.task_id == task.task_id)
+            aids = session.exec(aids_statement).all()
+            if task.passport_id:
+                shared_aids = session.exec(select(ReadingAid).where(ReadingAid.passport_id == task.passport_id)).all()
+                by_block = {aid.block_id: aid for aid in shared_aids}
+                by_block.update({aid.block_id: aid for aid in aids})
+                aids = list(by_block.values())
             notes = session.exec(
                 select(UserAnnotation)
                 .where(UserAnnotation.paper_id == paper.id, UserAnnotation.user_id == user_id)
@@ -235,9 +272,17 @@ class ReadingService:
 
     async def aid(self, task: Task, block: dict, document: dict) -> dict:
         key = f"{task.task_id}:{block['id']}"
-        async with self._locks[key]:
+        lock_key = f"{task.passport_id or task.task_id}:{block['id']}"
+        async with self._locks[lock_key]:
             with Session(self.engine) as session:
                 cached = session.get(ReadingAid, key)
+                if not cached and task.passport_id:
+                    cached = session.exec(
+                        select(ReadingAid).where(
+                            ReadingAid.passport_id == task.passport_id,
+                            ReadingAid.block_id == block["id"],
+                        )
+                    ).first()
                 if cached:
                     return json.loads(cached.content_json)
             index = block["index"]
@@ -262,6 +307,7 @@ chinese 必须忠实完整翻译 target 的全部文本，不总结、不删减�
                     ReadingAid(
                         id=key,
                         task_id=task.task_id,
+                        passport_id=task.passport_id,
                         block_id=block["id"],
                         content_json=json.dumps(result, ensure_ascii=False),
                     )
@@ -297,7 +343,13 @@ chinese 必须忠实完整翻译 target 的全部文本，不总结、不删减�
         return validate_evidence(result, context_blocks)
 
     async def ask(
-        self, task: Task, document: dict, question: str, selection: str = "", history: list[dict] | None = None
+        self,
+        task: Task,
+        document: dict,
+        question: str,
+        selection: str = "",
+        history: list[dict] | None = None,
+        image_bytes: bytes | None = None,
     ) -> dict:
         """Answer an explicit question against the complete extracted paper."""
         context = tagged_text(document["blocks"])
@@ -306,13 +358,14 @@ chinese 必须忠实完整翻译 target 的全部文本，不总结、不删减�
         prompt = """你是论文阅读助手。用户要读完整篇论文，请基于下面提供的全文回答问题。
 先给出直接、准确的中文回答，再说明依据和不确定性。根据用户的问题作答，不要编造。history 仅用于理解连续追问，不是论文证据；事实、数字与引用必须以 paper 为准。selection 是可选的关注片段，不能替代全文。引用时只使用输入中的 block_id；如果全文没有足够证据，明确说无法从论文确定。
 返回 JSON：{"answer":"...","reasoning":"...","uncertainty":"...","evidence_refs":["block_id"]}。"""
-        result = await self.ask_model(
-            prompt,
-            json.dumps(
-                {"question": question, "selection": selection, "history": history or [], "paper": context},
-                ensure_ascii=False,
-            ),
+        serialized_context = json.dumps(
+            {"question": question, "selection": selection, "history": history or [], "paper": context},
+            ensure_ascii=False,
         )
+        if image_bytes is None:
+            result = await self.ask_model(prompt, serialized_context)
+        else:
+            result = await self.ask_model(prompt, serialized_context, image_bytes)
         return validate_evidence(result, document["blocks"])
 
     async def summary(self, task: Task, document: dict) -> dict:

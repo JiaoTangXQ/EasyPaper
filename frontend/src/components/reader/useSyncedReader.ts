@@ -189,6 +189,7 @@ export function useSyncedReader(taskId: string) {
           await display(current);
         })
         .catch(() => {
+          // Keep the leave-page guard: this change exists only in memory now.
           setSaveError("批注尚未保存：浏览器存储失败。请保持页面打开并导出 PDF");
         });
       void writeChain.current.then(flush);

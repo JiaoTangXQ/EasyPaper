@@ -12,11 +12,11 @@ export function Switch({ checked, onCheckedChange, className, ...props }: Switch
       type="button"
       role="switch"
       aria-checked={checked}
-      className={cn("settings-switch", checked && "is-checked", className)}
+      className={cn("ui-switch", checked && "is-checked", className)}
       onClick={() => onCheckedChange(!checked)}
       {...props}
     >
-      <span className="settings-switch-thumb" />
+      <span className="ui-switch-thumb" />
     </button>
   );
 }

@@ -1,10 +1,30 @@
 import { useWorkspaceValue, useWorkspaceScroll } from "@/components/workspace/useWorkspaceMemory";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { isCancel } from "axios";
+import {
+  AlertCircle,
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  Clock,
+  FileSearch,
+  Loader2,
+  MessageCircleQuestion,
+  MoreHorizontal,
+  NotebookPen,
+  PanelRight,
+  Plus,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { PageHeader, EmptyState } from "@/components/workspace/PageHeader";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { PageHeader, EmptyState, ListSkeleton } from "@/components/workspace/PageHeader";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,39 +34,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import {
-  Upload,
-  FileText,
-  ArrowRight,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  Languages,
-  BookOpen,
-  MousePointerClick,
-  Trash2,
-  Search,
-  X,
-  Plus,
-  Loader2,
-  MoreHorizontal,
-  NotebookPen,
-} from "lucide-react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { confirmAction } from "@/lib/confirm";
+import ImportDialog, { type ImportResult } from "@/components/library/ImportDialog";
+import ReadingDemo from "@/components/workspace/ReadingDemo";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
 import { useFeatures } from "@/lib/features";
+import { friendlyDate } from "@/lib/format";
+import { TASKS_CHANGED } from "@/lib/session";
 
 const ACTIVE_TASK_STATUSES = new Set(["pending", "processing", "parsing", "rewriting", "rendering", "highlighting"]);
 
-function resultLabel(mode?: string) {
-  if (mode === "simplify") return "简化英文";
-  if (mode === "gloss") return "原文点读";
-  return "中文译文";
-}
-
+type TaskMode = "translate" | "simplify" | "gloss";
 interface Task {
   task_id: string;
   filename: string;
@@ -66,13 +67,42 @@ interface Task {
   created_at: string;
   percent?: number;
   message?: string;
-  mode?: "translate" | "simplify" | "gloss";
+  mode?: TaskMode;
   highlight?: boolean;
   can_read?: boolean;
   reading?: { block_id: string; page?: number; understood_count: number; updated_at: string };
 }
+type KnowledgeRef = { id: string; status: string };
+
+const MODE_META: Record<TaskMode, { label: string; glyph: string }> = {
+  translate: { label: "中文译文", glyph: "译" },
+  simplify: { label: "简化英文", glyph: "简" },
+  gloss: { label: "原文点读", glyph: "点" },
+};
+const STATUS_LABELS: Record<string, string> = {
+  pending: "排队中",
+  processing: "处理中",
+  parsing: "解析中",
+  rewriting: "正在生成阅读版本",
+  rendering: "正在排版",
+  highlighting: "高亮中",
+  completed: "完成",
+  failed: "失败",
+  error: "失败",
+  cancelled: "已取消",
+};
 
 const taskTitle = (task: Task) => task.title?.trim() || task.filename;
+const isReady = (task: Task) => task.status === "completed" || Boolean(task.can_read);
+const isFailed = (task: Task) => task.status === "failed" || task.status === "error";
+const taskErrorLabel = (task: Task) => {
+  const message = task.message?.trim();
+  if (!message) return "处理未完成，可以重新尝试。";
+  // Old tasks can contain a provider-specific message. Keep implementation
+  // details out of the library view; retrying always uses the current server provider.
+  if (/cursor|codex|cli|模型配置|网络|AI/i.test(message)) return "AI 处理未完成，服务暂时不可用。点击重试。";
+  return message;
+};
 type TitleState = { source: string; status: "pending" | "error" };
 
 function PaperTitleSubtitle({ task, state, retry }: { task: Task; state?: TitleState; retry: () => void }) {
@@ -96,25 +126,48 @@ function PaperTitleSubtitle({ task, state, retry }: { task: Task; state?: TitleS
   );
 }
 
+function StatusPill({ task }: { task: Task }) {
+  const mode = MODE_META[task.mode || "translate"];
+  if (task.status === "completed")
+    return (
+      <span className="pill is-ok">
+        <CheckCircle2 aria-hidden="true" />
+        {task.mode === "gloss" ? "原文点读可用" : `${mode.label}可读`}
+      </span>
+    );
+  if (isFailed(task))
+    return (
+      <span className="pill is-danger">
+        <AlertCircle aria-hidden="true" />
+        失败
+      </span>
+    );
+  if (ACTIVE_TASK_STATUSES.has(task.status))
+    return (
+      <span className="pill is-warn">
+        <Clock aria-hidden="true" />
+        {STATUS_LABELS[task.status]}
+      </span>
+    );
+  return <span className="pill">{STATUS_LABELS[task.status] || task.status}</span>;
+}
+
+function todayLabel() {
+  return new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+}
+
 const Dashboard = () => {
   const features = useFeatures();
-  const MAX_FILE_SIZE_MB = features.max_upload_mb;
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [knowledge, setKnowledge] = useState<Map<string, KnowledgeRef>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useWorkspaceValue("papers:status", "all");
-  const [extracting, setExtracting] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<"translate" | "simplify" | "gloss">("translate");
   const [search, setSearch] = useWorkspaceValue("papers:search");
-  const [highlight, setHighlight] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const [inputMode, setInputMode] = useState<"file" | "url">("file");
-  const [pdfUrl, setPdfUrl] = useState("");
-  const [urlLoading, setUrlLoading] = useState(false);
-  const navigate = useNavigate();
+  const [extracting, setExtracting] = useState("");
   useWorkspaceScroll("papers", !loading);
   const abortRef = useRef<AbortController | null>(null);
   const errorShownRef = useRef(false);
@@ -141,12 +194,29 @@ const Dashboard = () => {
       if (isCancel(error)) return;
       setLoading(false);
       setLoadError("无法获取论文列表，请检查连接后重试。");
-      // Surface the failure once per error streak instead of silently
-      // retrying forever, but don't spam a toast on every poll.
+      // Surface the failure once per error streak instead of on every poll.
       if (!errorShownRef.current) {
-        toast.error("无法加载任务列表，正在重试…");
+        toast.error("无法加载论文列表，正在重试…");
         errorShownRef.current = true;
       }
+    }
+  }, []);
+
+  // Knowledge notes are keyed by task so each row can link to its own notes.
+  const fetchKnowledge = useCallback(async () => {
+    try {
+      const { data } = await api.get<{ id: string; task_id: string | null; extraction_status: string }[]>(
+        "/api/knowledge/papers",
+      );
+      setKnowledge(
+        new Map(
+          (Array.isArray(data) ? data : [])
+            .filter((paper) => paper.task_id)
+            .map((paper) => [paper.task_id as string, { id: paper.id, status: paper.extraction_status }]),
+        ),
+      );
+    } catch {
+      /* The library stays usable without the knowledge index. */
     }
   }, []);
 
@@ -203,221 +273,133 @@ const Dashboard = () => {
   useEffect(() => {
     const available = 2 - titleCalls.current.size;
     if (available <= 0) return;
-    const missing = tasks.filter(
-      (task) =>
-        task.title &&
-        !task.title_zh &&
-        !/[\u3400-\u9fff]/.test(task.title) &&
-        !requestedTitles.current.has(`${task.task_id}:${task.title}`),
-    );
-    missing.slice(0, available).forEach((task) => void translateTitle(task));
+    tasks
+      .filter(
+        (task) =>
+          task.title &&
+          !task.title_zh &&
+          !/[\u3400-\u9fff]/.test(task.title) &&
+          !requestedTitles.current.has(`${task.task_id}:${task.title}`),
+      )
+      .slice(0, available)
+      .forEach((task) => void translateTitle(task));
   }, [tasks, titleStates, translateTitle]);
 
-  // 活跃任务期间 2 秒刷新一次，空闲时降到 15 秒。
+  // Poll every 2 s while something is processing, every 15 s otherwise.
   useEffect(() => {
-    fetchTasks();
-    const intervalMs = hasActiveTasks ? 2000 : 15000;
-    const id = window.setInterval(fetchTasks, intervalMs);
-
+    void fetchTasks();
+    const id = window.setInterval(fetchTasks, hasActiveTasks ? 2000 : 15000);
     return () => {
       window.clearInterval(id);
       abortRef.current?.abort();
     };
   }, [fetchTasks, hasActiveTasks]);
 
-  const validateFile = (file: File): boolean => {
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("仅支持 PDF 文件。");
-      return false;
-    }
-    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      toast.error(`文件大小超过 ${MAX_FILE_SIZE_MB}MB 限制。`);
-      return false;
-    }
-    return true;
-  };
+  useEffect(() => {
+    void fetchKnowledge();
+    const refresh = () => {
+      void fetchTasks();
+      void fetchKnowledge();
+    };
+    window.addEventListener(TASKS_CHANGED, refresh);
+    return () => window.removeEventListener(TASKS_CHANGED, refresh);
+  }, [fetchKnowledge, fetchTasks]);
 
-  const uploadFile = async (file: File) => {
-    if (!features.ai_available) {
-      toast.error("AI 服务尚未就绪，请联系管理员。");
-      return;
-    }
-    if (uploadProgress !== null || !validateFile(file)) return;
+  // The command palette opens the import dialog with ?import=1.
+  useEffect(() => {
+    if (searchParams.get("import") !== "1") return;
+    setImportOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("import");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("mode", mode);
-    formData.append("highlight", String(mode === "gloss" ? false : highlight));
-
-    setUploadProgress(0);
-    try {
-      await api.post("/api/upload", formData, {
-        onUploadProgress: (e) => {
-          if (e.total) {
-            setUploadProgress(Math.round((e.loaded / e.total) * 100));
-          }
-        },
+  const onImported = (result: ImportResult, name: string) => {
+    void fetchTasks();
+    if (result.duplicate_of) {
+      toast("这篇论文之前导入过", {
+        description: "已按新的阅读方式开始处理；旧的阅读记录和批注仍在原来那份里。",
+        action: { label: "打开已有", onClick: () => navigate(`/reader/${result.duplicate_of}`) },
+        duration: 9000,
       });
-      toast.success(`"${file.name}" 上传成功。`);
-      setImportOpen(false);
-      fetchTasks();
-    } catch (error: unknown) {
-      toast.error(getApiErrorMessage(error, "上传失败。"));
-    } finally {
-      setUploadProgress(null);
+    } else {
+      toast.success(`已开始处理「${name.split("/").pop()}」`, { description: "原文已可阅读，生成好的版本会自动出现。" });
     }
   };
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
-    e.target.value = "";
-    uploadFile(file);
-  };
-
-  // Drag & Drop handlers
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(true);
-  };
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-  };
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadFile(file);
-  };
-
-  const handleDelete = async (taskId: string) => {
-    if (!window.confirm("删除后会移除这篇论文的阅读文件和任务记录，知识库导出内容也可能受影响。确定删除吗？")) return;
+  const handleDelete = async (task: Task) => {
+    const ok = await confirmAction({
+      title: `删除「${taskTitle(task)}」？`,
+      description: "会移除这篇论文的阅读文件和任务记录。已整理的知识笔记会保留，但不再关联到这份阅读文件。",
+      confirmLabel: "删除论文",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await api.delete(`/api/tasks/${taskId}`);
-      setTasks((prev) => prev.filter((t) => t.task_id !== taskId));
-      toast.success("任务已删除。");
+      await api.delete(`/api/tasks/${task.task_id}`);
+      setTasks((prev) => prev.filter((t) => t.task_id !== task.task_id));
+      toast.success("论文已删除。");
     } catch {
-      toast.error("删除任务失败。");
+      toast.error("删除论文失败。");
     }
   };
 
-  const submitUrl = async () => {
-    if (!features.ai_available) return;
-    const trimmed = pdfUrl.trim();
-    if (!trimmed) {
-      toast.error("请输入 PDF 链接。");
-      return;
-    }
+  const retry = async (task: Task) => {
     try {
-      new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-    } catch {
-      toast.error("请输入有效的链接。");
-      return;
-    }
-    setUrlLoading(true);
-    try {
-      await api.post("/api/upload-url", {
-        url: trimmed,
-        mode,
-        highlight: mode === "gloss" ? false : highlight,
-      });
-      toast.success("PDF 下载成功，已开始处理！");
-      setPdfUrl("");
-      setImportOpen(false);
-      fetchTasks();
-    } catch (error: unknown) {
-      toast.error(getApiErrorMessage(error, "从链接下载 PDF 失败。"));
-    } finally {
-      setUrlLoading(false);
+      await api.post(`/api/tasks/${task.task_id}/retry`);
+      toast.success("已重新开始处理。");
+      void fetchTasks();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "重试失败，原始文件可能已过期。"));
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircle className="h-4 w-4" />;
-      case "processing":
-      case "parsing":
-      case "rewriting":
-      case "rendering":
-      case "highlighting":
-        return <Clock className="h-3.5 w-3.5" />;
-      case "failed":
-      case "error":
-        return <AlertCircle className="h-4 w-4" />;
-      case "cancelled":
-        return <X className="h-4 w-4" />;
-      default:
-        return <Clock className="h-4 w-4" />;
-    }
-  };
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case "pending":
-        return "排队中";
-      case "processing":
-        return "处理中";
-      case "parsing":
-        return "解析中";
-      case "rewriting":
-        return "正在生成阅读版本";
-      case "rendering":
-        return "正在排版";
-      case "highlighting":
-        return "高亮中";
-      case "completed":
-        return "完成";
-      case "failed":
-      case "error":
-        return "失败";
-      case "cancelled":
-        return "已取消";
-      default:
-        return status;
-    }
-  };
-
-  const filteredTasks = search
-    ? tasks.filter((t) =>
-        [taskTitle(t), t.title_zh || "", t.filename].some((value) =>
-          value.toLowerCase().includes(search.toLowerCase()),
-        ),
-      )
-    : tasks;
-
-  const lastRead = [...tasks]
-    .filter((task) => task.reading?.block_id && (task.status === "completed" || task.can_read))
-    .sort((a, b) => (b.reading?.updated_at || "").localeCompare(a.reading?.updated_at || ""))[0];
-  const hasFilters = Boolean(search || statusFilter !== "all");
-  const visibleTasks = filteredTasks.filter(
-    (task) =>
-      statusFilter === "all" ||
-      (statusFilter === "active"
-        ? ACTIVE_TASK_STATUSES.has(task.status)
-        : task.status === "completed" || task.can_read),
-  );
   const beginExtraction = async (task: Task) => {
     if (extracting) return;
     setExtracting(task.task_id);
     try {
-      await api.post(`/api/knowledge/extract/${task.task_id}`);
-      toast.success("已开始整理，可在知识笔记中查看进度。");
+      const { data } = await api.post<{ paper_id: string }>(`/api/knowledge/extract/${task.task_id}`);
+      void fetchKnowledge();
+      toast.success("已开始整理知识笔记", {
+        description: "通常需要一两分钟，可以继续阅读。",
+        action: data?.paper_id
+          ? { label: "查看进度", onClick: () => navigate(`/knowledge/paper/${data.paper_id}`) }
+          : undefined,
+      });
     } catch (error) {
       toast.error(getApiErrorMessage(error, "知识整理启动失败，请重试。"));
     } finally {
       setExtracting("");
     }
   };
+
+  const query = search.trim().toLowerCase();
+  const searched = query
+    ? tasks.filter((t) => [taskTitle(t), t.title_zh || "", t.filename].some((value) => value.toLowerCase().includes(query)))
+    : tasks;
+  const visibleTasks = searched.filter(
+    (task) =>
+      statusFilter === "all" || (statusFilter === "active" ? ACTIVE_TASK_STATUSES.has(task.status) : isReady(task)),
+  );
+  const counts = useMemo(
+    () => ({
+      all: tasks.length,
+      ready: tasks.filter(isReady).length,
+      active: tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length,
+    }),
+    [tasks],
+  );
+  const hasFilters = Boolean(query || statusFilter !== "all");
+  const lastRead = [...tasks]
+    .filter((task) => task.reading?.block_id && isReady(task))
+    .sort((a, b) => (b.reading?.updated_at || "").localeCompare(a.reading?.updated_at || ""))[0];
+
+  const aiUnavailable = features.loaded && !features.ai_available;
+
   return (
-    <div className="page-stack">
-      {!features.ai_available && (
-        <p role="status" className="rounded-xl border bg-muted p-4 text-sm text-muted-foreground">
-          AI 服务尚未就绪，请联系管理员。已保存的论文仍可阅读。
-        </p>
-      )}
+    <div className="page">
       <PageHeader
+        eyebrow={todayLabel()}
         title="我的论文"
         description="从上次停下的地方，继续读。"
         actions={
@@ -427,360 +409,221 @@ const Dashboard = () => {
           </Button>
         }
       />
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent className="import-dialog">
-          <DialogHeader>
-            <DialogTitle>导入论文</DialogTitle>
-            <DialogDescription>原文会保留。可以选择中文译文、简化英文，或在原文上点读。</DialogDescription>
-          </DialogHeader>
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium mb-2">阅读方式</legend>
-            <div className="import-options">
-              <label className="import-option">
-                <input
-                  type="radio"
-                  name="reading-result"
-                  checked={mode === "translate"}
-                  onChange={() => setMode("translate")}
-                  disabled={uploadProgress !== null || urlLoading}
-                />
-                <Languages size={18} />
-                中文译文
-              </label>
-              <label className="import-option">
-                <input
-                  type="radio"
-                  name="reading-result"
-                  checked={mode === "simplify"}
-                  onChange={() => setMode("simplify")}
-                  disabled={uploadProgress !== null || urlLoading}
-                />
-                <BookOpen size={18} />
-                简化英文
-              </label>
-              <label className="import-option import-option-wide">
-                <input
-                  type="radio"
-                  name="reading-result"
-                  checked={mode === "gloss"}
-                  onChange={() => setMode("gloss")}
-                  disabled={uploadProgress !== null || urlLoading}
-                />
-                <MousePointerClick size={18} />
-                <span className="import-option-copy">
-                  <strong>原文点读</strong>
-                  <small>在原文上点词、术语或句式，释义已经准备好，点开就能看。</small>
-                </span>
-              </label>
-            </div>
-          </fieldset>
-          <Tabs value={inputMode} onValueChange={(value) => setInputMode(value as "file" | "url")}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="file">PDF 文件</TabsTrigger>
-              <TabsTrigger value="url">论文链接</TabsTrigger>
-            </TabsList>
-            <TabsContent value="file">
-              <div
-                className={cn("import-dropzone", dragging && "is-dragging")}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                <Upload size={27} className="text-primary" />
-                <h3 className="font-medium">选择要阅读的 PDF</h3>
-                <p>
-                  也可拖拽到这里 · 最大 {MAX_FILE_SIZE_MB} MB · {features.max_pages} 页
-                </p>
-                <Button
-                  disabled={!features.ai_available || uploadProgress !== null}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  {uploadProgress !== null ? <Loader2 className="animate-spin" /> : <FileText />}
-                  {uploadProgress !== null ? "正在上传…" : "选择 PDF"}
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  hidden
-                  onChange={handleUpload}
-                  aria-label="上传 PDF"
-                  disabled={!features.ai_available}
-                />
-                {uploadProgress !== null && (
-                  <div className="w-full space-y-2" role="status">
-                    <p>上传文件 {uploadProgress}%</p>
-                    <Progress value={uploadProgress} />
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-            <TabsContent value="url">
-              <form
-                className="space-y-3 py-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void submitUrl();
-                }}
-              >
-                <label htmlFor="paper-url" className="text-sm font-medium">
-                  PDF 链接
-                </label>
-                <Input
-                  id="paper-url"
-                  type="url"
-                  placeholder="粘贴 arXiv、OpenReview 或 PDF 直链"
-                  value={pdfUrl}
-                  onChange={(e) => setPdfUrl(e.target.value)}
-                  disabled={!features.ai_available || urlLoading}
-                />
-                <Button type="submit" disabled={!features.ai_available || urlLoading || !pdfUrl.trim()}>
-                  {urlLoading ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-                  {urlLoading ? "正在获取论文…" : "导入链接"}
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
-          {mode !== "gloss" && (
-          <details className="import-optional">
-            <summary>可选设置</summary>
-            <label>
-              <input
-                type="checkbox"
-                checked={highlight}
-                onChange={(e) => setHighlight(e.target.checked)}
-                disabled={uploadProgress !== null || urlLoading}
-              />
-              <span>
-                生成时自动标注重点
-                <br />
-                <span className="text-xs">AI 标注供阅读参考，也可以自行划线。</span>
-              </span>
-            </label>
-          </details>
-          )}
-          <p className="text-xs text-muted-foreground">其他阅读版本可在阅读器中生成。关闭面板不会取消已提交的任务。</p>
-        </DialogContent>
-      </Dialog>
+      {aiUnavailable && (
+        <p role="status" className="notice">
+          <AlertCircle aria-hidden="true" />
+          AI 服务尚未就绪，暂时不能导入或生成新版本。已保存的论文仍可阅读，请联系管理员。
+        </p>
+      )}
+      <ImportDialog open={importOpen} onOpenChange={setImportOpen} features={features} onImported={onImported} />
       {loading ? (
-        <div className="workspace-empty" role="status">
-          <Loader2 className="animate-spin text-primary" />
-          <p>正在加载论文…</p>
-        </div>
+        <ListSkeleton rows={3} label="正在加载论文…" />
       ) : loadError && tasks.length === 0 ? (
         <EmptyState title="论文加载失败" description={loadError} error>
           <Button onClick={() => void fetchTasks()}>重新加载</Button>
         </EmptyState>
       ) : tasks.length === 0 ? (
-        <section className="library-welcome">
-          <div>
-            <h2>
-              从一篇论文，
-              <br />
-              开始读懂。
-            </h2>
-            <p>保留完整正文、图表和公式，按需要切换阅读版本。遇到疑问就地提问，理解留在批注里。</p>
-            <Button disabled={!features.ai_available} onClick={() => setImportOpen(true)}>
-              <Plus />
-              导入第一篇论文
-            </Button>
+        <>
+          <section className="library-welcome ep-enter">
+            <div>
+              <h2>
+                从一篇论文，
+                <br />
+                开始读懂。
+              </h2>
+              <p>保留完整正文、图表和公式，按需要切换阅读版本。遇到生词点一下就有释义，有疑问就地提问。</p>
+              <Button size="lg" disabled={!features.ai_available} onClick={() => setImportOpen(true)}>
+                <Plus />
+                导入第一篇论文
+              </Button>
+            </div>
+            <ReadingDemo />
+          </section>
+          <div className="welcome-steps ep-stagger">
+            {[
+              { icon: <Upload />, title: "导入", text: "上传 PDF，或粘贴 arXiv、OpenReview 链接。原文马上就能读。" },
+              {
+                icon: <MessageCircleQuestion />,
+                title: "阅读与提问",
+                text: "原文、中文、简化英文、双语对照随时切换，划线和批注跟着内容走。",
+              },
+              { icon: <Sparkles />, title: "整理与复习", text: "把发现、概念和生词整理成笔记与卡片，定期复习。" },
+            ].map((step) => (
+              <div className="welcome-step" key={step.title}>
+                <span className="welcome-step-icon" aria-hidden="true">
+                  {step.icon}
+                </span>
+                <h3>{step.title}</h3>
+                <p>{step.text}</p>
+              </div>
+            ))}
           </div>
-          <div className="language-example">
-            <span>阅读方式示例</span>
-            <p lang="en">
-              Read the paper.
-              <br />
-              <mark>Keep your understanding alongside it.</mark>
-            </p>
-            <p>
-              读完论文，
-              <br />
-              <mark>把理解留在原文旁边。</mark>
-            </p>
-          </div>
-        </section>
+        </>
       ) : (
         <>
           {lastRead && !hasFilters && (
-            <section className="continue-section">
-              <h2>继续阅读</h2>
+            <section className="continue-section ep-enter" aria-label="继续阅读">
               <div className="continue-paper">
-                <div>
+                <div className="continue-paper-copy">
+                  <span className="continue-kicker">
+                    <BookOpen size={15} aria-hidden="true" />
+                    继续阅读
+                  </span>
                   <h3>{taskTitle(lastRead)}</h3>
                   <PaperTitleSubtitle
                     task={lastRead}
                     state={titleStates[lastRead.task_id]}
                     retry={() => void translateTitle(lastRead)}
                   />
-                  <p>
-                    {lastRead.reading?.page ? `上次读到第 ${lastRead.reading.page} 页` : "已有阅读记录"} ·
-                    阅读位置已保存
+                  <p className="continue-meta">
+                    <span>{lastRead.reading?.page ? `上次读到第 ${lastRead.reading.page} 页` : "已有阅读记录"}</span>
+                    <span>{friendlyDate(lastRead.reading?.updated_at)}</span>
+                    <span>{MODE_META[lastRead.mode || "translate"].label}</span>
                   </p>
                 </div>
-                <Button onClick={() => navigate(`/reader/${lastRead.task_id}`)}>
-                  继续阅读
-                  <ArrowRight />
-                </Button>
+                <div className="continue-actions">
+                  <span className="paper-stack" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <Button size="lg" onClick={() => navigate(`/reader/${lastRead.task_id}`)}>
+                    继续阅读
+                    <ArrowRight />
+                  </Button>
+                </div>
               </div>
             </section>
           )}
-          <section aria-label="论文列表">
+          <section className="section ep-enter" style={{ "--ep-delay": "60ms" } as React.CSSProperties} aria-label="论文列表">
             <div className="section-heading">
               <h2>
-                全部论文 <span className="text-sm font-normal text-muted-foreground">{tasks.length}</span>
+                全部论文 <span className="section-count">{tasks.length}</span>
               </h2>
+            </div>
+            <div className="section-toolbar">
+              <SegmentedControl
+                ariaLabel="筛选论文状态"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { value: "all", label: "全部", ariaLabel: "全部" },
+                  { value: "ready", label: "可阅读", hint: counts.ready || undefined, ariaLabel: "可阅读" },
+                  { value: "active", label: "处理中", hint: counts.active || undefined, ariaLabel: "处理中" },
+                ]}
+              />
               <div className="search-field">
-                <Search size={16} />
+                <Search aria-hidden="true" />
                 <Input
                   aria-label="按标题搜索论文"
-                  placeholder="搜索论文标题"
+                  placeholder="搜索标题或文件名"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
+                {search && (
+                  <button type="button" className="search-clear" aria-label="清除论文搜索" onClick={() => setSearch("")}>
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 mb-4" aria-label="筛选论文状态">
-              {(
-                [
-                  ["all", "全部"],
-                  ["ready", "可阅读"],
-                  ["active", "处理中"],
-                ] as const
-              ).map(([value, label]) => (
-                <Button
-                  key={value}
-                  size="sm"
-                  variant={statusFilter === value ? "secondary" : "ghost"}
-                  aria-pressed={statusFilter === value}
-                  onClick={() => setStatusFilter(value)}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
             {visibleTasks.length ? (
-              <div className="paper-list">
+              <div className="paper-list ep-stagger">
                 {visibleTasks.map((task) => {
-                  const ready = task.status === "completed" || task.can_read;
-                  const failed = task.status === "failed" || task.status === "error";
+                  const ready = isReady(task);
+                  const failed = isFailed(task);
                   const processing = ACTIVE_TASK_STATUSES.has(task.status);
+                  const mode = task.mode || "translate";
+                  const notes = knowledge.get(task.task_id);
+                  const open = () => navigate(`/reader/${task.task_id}`);
                   return (
                     <article key={task.task_id} className="paper-row">
-                      <div className="paper-row-main">
-                        <FileText size={20} />
-                        <div className="paper-row-text">
-                          <h3 className="paper-title" title={taskTitle(task)}>
-                            {taskTitle(task)}
-                          </h3>
-                          <PaperTitleSubtitle
-                            task={task}
-                            state={titleStates[task.task_id]}
-                            retry={() => void translateTitle(task)}
-                          />
-                          <div className="paper-meta">
-                            <span
-                              className={cn(
-                                "task-status",
-                                task.status === "completed"
-                                  ? "is-ready"
-                                  : failed
-                                    ? "is-error"
-                                    : processing
-                                      ? "is-pending"
-                                      : "",
-                              )}
-                            >
-                              {getStatusIcon(task.status)}
-                              {task.status === "completed"
-                                ? task.mode === "gloss"
-                                  ? "原文点读可用"
-                                  : `${resultLabel(task.mode)}可读`
-                                : getStatusLabel(task.status)}
+                      <span className={cn("paper-glyph", `is-${mode}`)} aria-hidden="true">
+                        {MODE_META[mode].glyph}
+                      </span>
+                      <div className="paper-row-text">
+                        <h3>
+                          {ready ? (
+                            <button type="button" className="paper-title" title={taskTitle(task)} onClick={open}>
+                              {taskTitle(task)}
+                            </button>
+                          ) : (
+                            <span className="paper-title" title={taskTitle(task)}>
+                              {taskTitle(task)}
                             </span>
-                            <span>{new Date(task.created_at).toLocaleDateString()}</span>
-                            {task.reading?.page && <span>上次第 {task.reading.page} 页</span>}
-                            {task.highlight && <span>已启用 AI 标注</span>}
-                          </div>
-                          {processing && (
-                            <div className="paper-progress">
-                              <div className="flex justify-between gap-3 text-xs text-muted-foreground">
-                                <span>{task.message || "正在准备论文"}</span>
-                                {typeof task.percent === "number" && <span>{task.percent}%</span>}
-                              </div>
-                              {typeof task.percent === "number" && <Progress value={task.percent} className="h-1" />}
-                            </div>
                           )}
-                          {failed && (
-                            <p className="text-sm text-destructive mt-3">
-                              {task.message || "生成失败，可以重新处理。"}
-                            </p>
-                          )}
+                        </h3>
+                        <PaperTitleSubtitle
+                          task={task}
+                          state={titleStates[task.task_id]}
+                          retry={() => void translateTitle(task)}
+                        />
+                        <div className="paper-meta">
+                          <StatusPill task={task} />
+                          <span>{friendlyDate(task.created_at)}导入</span>
+                          {task.reading?.page && <span>读到第 {task.reading.page} 页</span>}
+                          {task.highlight && <span>AI 标注重点</span>}
+                          {notes?.status === "completed" && <span>已整理笔记</span>}
+                          {notes?.status === "extracting" && <span>正在整理笔记…</span>}
                         </div>
+                        {processing && (
+                          <div className="paper-progress">
+                            <div className="paper-progress-label">
+                              <span>{task.message || "正在准备论文"}</span>
+                              {typeof task.percent === "number" && <span>{task.percent}%</span>}
+                            </div>
+                            <Progress value={typeof task.percent === "number" ? task.percent : undefined} />
+                          </div>
+                        )}
+                        {failed && <p className="paper-error">{taskErrorLabel(task)}</p>}
                       </div>
                       <div className="paper-row-actions">
                         {ready && (
-                          <Button size="sm" variant="outline" onClick={() => navigate(`/reader/${task.task_id}`)}>
-                            {task.status !== "completed"
-                              ? "先读原文"
-                              : task.reading?.block_id
-                                ? "继续阅读"
-                                : "开始阅读"}
+                          <Button size="sm" variant="outline" onClick={open}>
+                            {task.status !== "completed" ? "先读原文" : task.reading?.block_id ? "继续阅读" : "开始阅读"}
                             <ArrowRight />
                           </Button>
                         )}
-                        {task.status === "completed" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => navigate(`/reader/${task.task_id}?panel=summary`)}
-                          >
-                            概览
-                          </Button>
-                        )}
                         {failed && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              try {
-                                await api.post(`/api/tasks/${task.task_id}/retry`);
-                                void fetchTasks();
-                              } catch {
-                                toast.error("重试失败，原始文件可能已过期。");
-                              }
-                            }}
-                          >
+                          <Button size="sm" variant="secondary" onClick={() => void retry(task)}>
+                            <RotateCcw />
                             重试
                           </Button>
                         )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label={`${taskTitle(task)} 的更多操作`}>
+                            <Button variant="ghost" size="icon-sm" aria-label={`${taskTitle(task)} 的更多操作`}>
                               <MoreHorizontal />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {task.status === "completed" && (
-                              <>
-                                <DropdownMenuItem
-                                  disabled={Boolean(extracting)}
-                                  onSelect={() => void beginExtraction(task)}
-                                >
-                                  <NotebookPen className="mr-2 h-4 w-4" />
-                                  {extracting === task.task_id ? "正在启动整理…" : "整理知识笔记"}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => navigate("/knowledge")}>
-                                  <BookOpen className="mr-2 h-4 w-4" />
-                                  查看知识笔记
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                              </>
+                            {ready && (
+                              <DropdownMenuItem onSelect={() => navigate(`/reader/${task.task_id}?panel=summary`)}>
+                                <PanelRight />
+                                打开论文概览
+                              </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onSelect={() => void handleDelete(task.task_id)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
+                            {notes && notes.status === "completed" ? (
+                              <DropdownMenuItem onSelect={() => navigate(`/knowledge/paper/${notes.id}`)}>
+                                <NotebookPen />
+                                查看知识笔记
+                              </DropdownMenuItem>
+                            ) : task.status === "completed" ? (
+                              <DropdownMenuItem
+                                disabled={Boolean(extracting) || notes?.status === "extracting"}
+                                onSelect={() => void beginExtraction(task)}
+                              >
+                                {extracting === task.task_id ? <Loader2 className="spin" /> : <NotebookPen />}
+                                {notes?.status === "extracting"
+                                  ? "知识笔记整理中"
+                                  : extracting === task.task_id
+                                    ? "正在启动整理…"
+                                    : "整理知识笔记"}
+                              </DropdownMenuItem>
+                            ) : null}
+                            {(ready || notes) && <DropdownMenuSeparator />}
+                            <DropdownMenuItem danger onSelect={() => void handleDelete(task)}>
+                              <Trash2 />
                               删除论文
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -791,17 +634,19 @@ const Dashboard = () => {
                 })}
               </div>
             ) : (
-              <EmptyState title="没有符合条件的论文" description="试试其他标题，或清除筛选。">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setSearch("");
-                    setStatusFilter("all");
-                  }}
-                >
-                  清除筛选
-                </Button>
-              </EmptyState>
+              <div className="card">
+                <EmptyState title="没有符合条件的论文" description="试试其他标题，或清除筛选。" icon={<FileSearch />}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setSearch("");
+                      setStatusFilter("all");
+                    }}
+                  >
+                    清除筛选
+                  </Button>
+                </EmptyState>
+              </div>
             )}
           </section>
         </>

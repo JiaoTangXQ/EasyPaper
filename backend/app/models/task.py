@@ -60,6 +60,7 @@ class Task(SQLModel, table=True):
 
     # User ownership
     user_id: int | None = Field(default=None, foreign_key="user.id", index=True)
+    passport_id: str | None = Field(default=None, foreign_key="paperpassport.id", index=True)
 
     @property
     def progress(self) -> TaskProgress:

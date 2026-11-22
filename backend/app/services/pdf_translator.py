@@ -21,8 +21,8 @@ class PDFTranslator:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.zhizengzeng.com/v1",
-        model: str = "gemini-2.5-flash",
+        base_url: str = "https://tokenhub.tencentmaas.com/v1",
+        model: str = "deepseek-v4.1-flash-1017",
         lang_in: str = "en",
         lang_out: str = "zh",
         thread: int = 4,

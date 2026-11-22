@@ -22,7 +22,7 @@ from app.services.knowledge_worker_service import KnowledgeWorkerService
 def worker_env(monkeypatch, engine, tmp_path):
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
-        """
+        f"""
 llm:
   provider: api
   api_key: test-key
@@ -33,8 +33,8 @@ processing:
 knowledge_worker:
   token: test-knowledge-token
 storage:
-  temp_dir: {tmp}/tmp
-""".format(tmp=tmp_path),
+  temp_dir: {tmp_path}/tmp
+""",
         encoding="utf-8",
     )
     monkeypatch.setenv("APP_CONFIG_PATH", str(cfg_path))

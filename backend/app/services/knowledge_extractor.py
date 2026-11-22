@@ -18,6 +18,7 @@ from ..models.knowledge import (
     KnowledgeEntity,
     KnowledgeRelationship,
     PaperKnowledge,
+    PaperPassport,
 )
 from .ai_client import AIClient, AIError
 from .document_parser import parse_document, tagged_text, validate_evidence
@@ -61,14 +62,14 @@ ENTITY_RELATIONSHIP_PROMPT = (
     "实体类型：method, model, dataset, metric, concept, task, person, organization\n"
     "关系类型：extends, uses, evaluates_on, outperforms, similar_to, "
     "contradicts, part_of, requires\n\n"
-    "每个实体：name（专有名词保留英文）, type, aliases（列表）, definition（一句中文定义）, importance（0-1）\n"
-    "每个关系：source（实体名）, target（实体名）, type, description（中文描述）, confidence（0-1）\n\n"
+    "每个实体：name（专有名词保留英文）, type, aliases（列表）, definition（一句中文定义）, importance（0-1）, evidence_refs（支持它的 block_id 列表）\n"
+    "每个关系：source（实体名）, target（实体名）, type, description（中文描述）, confidence（0-1）, evidence_refs（支持关系的 block_id 列表）\n\n"
     "每个章节返回3-10个实体和1-8个关系。跳过琐碎或通用的实体。\n\n"
     "仅返回 JSON：\n"
     '{"entities": [{"name": "...", "type": "method", "aliases": [], '
-    '"definition": "...", "importance": 0.8}], '
+    '"definition": "...", "importance": 0.8, "evidence_refs": ["block_id"]}], '
     '"relationships": [{"source": "...", "target": "...", "type": "extends", '
-    '"description": "...", "confidence": 0.8}]}\n'
+    '"description": "...", "confidence": 0.8, "evidence_refs": ["block_id"]}]}\n'
 )
 
 FINDINGS_PROMPT = (
@@ -220,11 +221,18 @@ class KnowledgeExtractor:
             paper.arxiv_id = metadata.get("arxiv_id")
             paper.year = metadata.get("year")
             paper.venue = metadata.get("venue")
-            paper.extraction_status = "completed"
             paper.extraction_error = None
             paper.extraction_model = knowledge.get("extraction_model") or self.model
             paper.updated_at = datetime.utcnow()
             session.add(paper)
+            if paper.passport_id:
+                passport = session.get(PaperPassport, paper.passport_id)
+                if passport:
+                    passport.title = paper.title or passport.title
+                    passport.doi = paper.doi or passport.doi
+                    passport.arxiv_id = paper.arxiv_id or passport.arxiv_id
+                    passport.updated_at = datetime.utcnow()
+                    session.add(passport)
             session.commit()
             session.refresh(paper)
         self._save_index_tables(
@@ -235,6 +243,16 @@ class KnowledgeExtractor:
             knowledge.get("flashcards") or [],
             db_engine=db,
         )
+        with Session(db) as session:
+            paper = session.get(PaperKnowledge, paper_id)
+            if paper is None:
+                raise ValueError(f"PaperKnowledge {paper_id} not found")
+            paper.extraction_status = "completed"
+            paper.extraction_error = None
+            paper.updated_at = datetime.utcnow()
+            session.add(paper)
+            session.commit()
+            session.refresh(paper)
         return paper
 
     async def _run_pipeline(
@@ -248,6 +266,7 @@ class KnowledgeExtractor:
         on_progress=None,
     ) -> dict:
         """执行提取流水线的各阶段。"""
+
         async def _report(done: int, total: int) -> None:
             if on_progress:
                 await on_progress(done, total)
@@ -527,6 +546,7 @@ class KnowledgeExtractor:
                         aliases_json=json.dumps(ent.get("aliases", []), ensure_ascii=False),
                         definition=ent.get("definition"),
                         importance=ent.get("importance", 0.5),
+                        evidence_json=json.dumps(ent.get("evidence_refs", []), ensure_ascii=False),
                     )
                 )
 
@@ -541,6 +561,7 @@ class KnowledgeExtractor:
                         type=rel.get("type", "uses"),
                         description=rel.get("description"),
                         confidence=rel.get("confidence", 0.5),
+                        evidence_json=json.dumps(rel.get("evidence_refs", []), ensure_ascii=False),
                     )
                 )
 

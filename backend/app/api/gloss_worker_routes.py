@@ -34,6 +34,10 @@ class ProgressRequest(BaseModel):
     total: int = Field(ge=0)
 
 
+class CheckpointRequest(BaseModel):
+    spans: list[dict[str, Any]]
+
+
 class FailRequest(BaseModel):
     message: str = Field(default="本地点读准备失败", max_length=500)
 
@@ -76,6 +80,15 @@ def create_gloss_worker_router(service: GlossWorkerService) -> APIRouter:
         _: None = Depends(verify_worker_token),
     ) -> dict[str, str]:
         service.report_progress(claim_token, body.done, body.total)
+        return {"status": "ok"}
+
+    @router.post("/jobs/{claim_token}/checkpoint")
+    async def checkpoint(
+        claim_token: str,
+        body: CheckpointRequest,
+        _: None = Depends(verify_worker_token),
+    ) -> dict[str, str]:
+        service.checkpoint(claim_token, body.spans)
         return {"status": "ok"}
 
     @router.post("/jobs/{claim_token}/complete")

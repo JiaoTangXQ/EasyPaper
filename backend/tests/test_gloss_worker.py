@@ -23,7 +23,7 @@ from app.services.task_manager import TaskManager
 def worker_env(monkeypatch, engine, tmp_path):
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
-        """
+        f"""
 llm:
   provider: api
   api_key: test-key
@@ -34,9 +34,9 @@ processing:
 gloss_worker:
   token: test-worker-token
 storage:
-  temp_dir: {tmp}/tmp
-  library_dir: {tmp}/library
-""".format(tmp=tmp_path),
+  temp_dir: {tmp_path}/tmp
+  library_dir: {tmp_path}/library
+""",
         encoding="utf-8",
     )
     monkeypatch.setenv("APP_CONFIG_PATH", str(cfg_path))
@@ -54,7 +54,9 @@ storage:
     app.include_router(create_gloss_worker_router(service))
     client = TestClient(app)
     headers = {"Authorization": "Bearer test-worker-token"}
-    yield SimpleNamespace(client=client, headers=headers, service=service, reader=synced, task_manager=task_manager, cfg=cfg)
+    yield SimpleNamespace(
+        client=client, headers=headers, service=service, reader=synced, task_manager=task_manager, cfg=cfg
+    )
     get_config.cache_clear()
 
 
@@ -74,11 +76,15 @@ def _seed_job(engine, worker_env, tmp_path):
             kind="original",
             fingerprint="a" * 64,
             path=str(pdf),
-            index_json=json.dumps({"units": [{"id": "s1", "page": 0, "text": "Energy is stored.", "chars": []}], "pages": [{}]}),
+            index_json=json.dumps(
+                {"units": [{"id": "s1", "page": 0, "text": "Energy is stored.", "chars": []}], "pages": [{}]}
+            ),
             mappings_json="[]",
         )
         session.add(version)
-        session.add(ReaderBuild(id=f"{document_id}:gloss", document_id=document_id, kind="gloss", status="awaiting_worker"))
+        session.add(
+            ReaderBuild(id=f"{document_id}:gloss", document_id=document_id, kind="gloss", status="awaiting_worker")
+        )
         session.add(
             GlossWorkerJob(
                 id=f"{document_id}:gloss",
@@ -99,7 +105,9 @@ def _seed_job(engine, worker_env, tmp_path):
 
 def test_worker_claim_package_and_complete(engine, worker_env, tmp_path):
     _seed_job(engine, worker_env, tmp_path)
-    claim = worker_env.client.post("/api/gloss-worker/jobs/claim", headers=worker_env.headers, json={"worker_label": "test"})
+    claim = worker_env.client.post(
+        "/api/gloss-worker/jobs/claim", headers=worker_env.headers, json={"worker_label": "test"}
+    )
     assert claim.status_code == 200
     token = claim.json()["job"]["claim_token"]
     package = worker_env.client.get(f"/api/gloss-worker/jobs/{token}/package", headers=worker_env.headers)
@@ -107,10 +115,24 @@ def test_worker_claim_package_and_complete(engine, worker_env, tmp_path):
     with zipfile.ZipFile(BytesIO(package.content)) as archive:
         assert "original.pdf" in archive.namelist()
         assert json.loads(archive.read("index.json"))
+    checkpoint = worker_env.client.post(
+        f"/api/gloss-worker/jobs/{token}/checkpoint",
+        headers=worker_env.headers,
+        json={"spans": [{"id": "partial", "unit_id": "s1", "text": "Energy", "zh": "能量"}]},
+    )
+    assert checkpoint.status_code == 200
+    with Session(engine) as session:
+        build = session.get(ReaderBuild, "doc123:gloss")
+        assert build.status == "claimed"
+        gloss = session.get(ReaderGloss, "doc123")
+        assert gloss is not None
+        assert json.loads(gloss.spans_json)[0]["id"] == "partial"
     complete = worker_env.client.post(
         f"/api/gloss-worker/jobs/{token}/complete",
         headers=worker_env.headers,
-        json={"spans": [{"id": "x", "unit_id": "s1", "text": "Energy", "zh": "能量", "category": "word", "label": "单词"}]},
+        json={
+            "spans": [{"id": "x", "unit_id": "s1", "text": "Energy", "zh": "能量", "category": "word", "label": "单词"}]
+        },
     )
     assert complete.status_code == 200
     with Session(engine) as session:

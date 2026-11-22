@@ -18,6 +18,9 @@ from .reader_geometry import normalized
 GLOSS_MODEL = "grok-4.7-low-fast"
 GLOSS_BATCH_UNITS = 24
 GLOSS_BATCH_CHARS = 1800
+API_GLOSS_BATCH_UNITS = 2
+API_GLOSS_BATCH_CHARS = 300
+API_GLOSS_MAX_TOKENS = 2048
 GLOSS_LONG_SENTENCE_CHARS = 450
 GLOSS_CALL_TIMEOUT = 180
 GLOSS_CONCURRENCY = 2
@@ -49,6 +52,11 @@ GLOSS_SYSTEM = (
     '只返回 JSON：{"sentences":[{"id":"原句 id","spans":[{"text":"...","category":"word","zh":"...","ipa":"...","en":"...","simple_en":"..."}]}]}'
 )
 
+API_GLOSS_SYSTEM = GLOSS_SYSTEM + (
+    "\n为控制 API 延迟，word 块只返回 text、category、zh；不要返回 ipa、en 或 simple_en。"
+    "其他类别只返回 text、category、zh，role 可省略。"
+)
+
 _SIMPLE_EN_FALLBACKS = {
     "term": "This term names an idea or thing in the text.",
     "collocation": "These words are often used together.",
@@ -78,12 +86,16 @@ def tile_sentence(
     cursor = 0
     produced = []
     for raw in spans:
+        # Some reasoning-capable providers emit a whitespace-only separator
+        # as a span even though the prompt says to attach punctuation. Spaces
+        # are already consumed between neighboring spans, so discard only
+        # these empty separators before validating coverage.
+        if isinstance(raw, dict) and isinstance(raw.get("text"), str) and not normalized(raw["text"]):
+            continue
         if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not normalized(raw["text"]):
             raise GlossCoverageError("切块没有可用的原文")
         begin, end = _consume(source, cursor, raw["text"])
-        produced.append(
-            _present(source[begin:end].strip(), raw, begin, end, unit, page_units_by_page)
-        )
+        produced.append(_present(source[begin:end].strip(), raw, begin, end, unit, page_units_by_page))
         cursor = end
     if normalized(source[cursor:]):
         raise GlossCoverageError("句子还有没覆盖的内容")
@@ -95,7 +107,7 @@ async def prepare_gloss(
 ) -> list[dict]:
     """Cover every sentence. A timed-out batch is split; a bad tiling is retried once."""
     skip = set(skip_ids or ())
-    batches = [batch for batch in _batches(units) if any(unit.get("id") not in skip for unit in batch)]
+    batches = [batch for batch in _batches_for_ai(ai, units) if any(unit.get("id") not in skip for unit in batch)]
     page_units_by_page = _group_page_units(units)
     total = len(batches)
     if concurrency <= 1:
@@ -174,6 +186,10 @@ async def _cover_batch(ai, batch: list[dict], units: list[dict], page_units_by_p
 
 
 def _batches(units: list[dict]) -> list[list[dict]]:
+    return _batches_with_limits(units, GLOSS_BATCH_UNITS, GLOSS_BATCH_CHARS)
+
+
+def _batches_with_limits(units: list[dict], max_units: int, max_chars: int) -> list[list[dict]]:
     batches, current, size = [], [], 0
     for unit in units:
         text = unit.get("text") or ""
@@ -183,9 +199,7 @@ def _batches(units: list[dict]) -> list[list[dict]]:
         # of the request budget, and mixing another sentence with it makes
         # malformed tilings more likely without improving throughput.
         if current and (
-            len(current) >= GLOSS_BATCH_UNITS
-            or size + len(text) > GLOSS_BATCH_CHARS
-            or len(text) > GLOSS_LONG_SENTENCE_CHARS
+            len(current) >= max_units or size + len(text) > max_chars or len(text) > GLOSS_LONG_SENTENCE_CHARS
         ):
             batches.append(current)
             current, size = [], 0
@@ -199,17 +213,33 @@ def _batches(units: list[dict]) -> list[list[dict]]:
     return batches
 
 
+def _is_api_ai(ai) -> bool:
+    return getattr(getattr(ai, "config", None), "provider", "") == "api"
+
+
+def _model_for_ai(ai) -> str | None:
+    # GLOSS_MODEL is the historical Cursor model override. OpenAI-compatible
+    # providers must use the model selected in their private configuration.
+    return None if _is_api_ai(ai) else GLOSS_MODEL
+
+
+def _batches_for_ai(ai, units: list[dict]) -> list[list[dict]]:
+    if _is_api_ai(ai):
+        return _batches_with_limits(units, API_GLOSS_BATCH_UNITS, API_GLOSS_BATCH_CHARS)
+    return _batches(units)
+
+
 async def _cover(ai, batch: list[dict], units: list[dict], page_units_by_page: dict) -> list[dict]:
     user = json.dumps(
         {"sentences": [{"id": unit["id"], "text": unit["text"]} for unit in batch]},
         ensure_ascii=False,
     )
     result = await ai.complete_json(
-        GLOSS_SYSTEM,
+        API_GLOSS_SYSTEM if _is_api_ai(ai) else GLOSS_SYSTEM,
         user,
-        max_tokens=8192,
+        max_tokens=API_GLOSS_MAX_TOKENS if _is_api_ai(ai) else 8192,
         timeout_seconds=GLOSS_CALL_TIMEOUT,
-        model=GLOSS_MODEL,
+        model=_model_for_ai(ai),
         bypass_slot=True,
     )
     sentences = result.get("sentences") if isinstance(result, dict) else None
@@ -257,11 +287,11 @@ async def _fallback_unit(ai, unit: dict, units: list[dict], page_units_by_page: 
     zh = ""
     try:
         result = await ai.complete_json(
-            "把英文原文译成一句简体中文，保留术语和缩写。只返回 JSON：{\"zh\":\"中文\"}。",
+            '把英文原文译成一句简体中文，保留术语和缩写。只返回 JSON：{"zh":"中文"}。',
             json.dumps({"text": unit["text"]}, ensure_ascii=False),
             max_tokens=512,
             timeout_seconds=60,
-            model=GLOSS_MODEL,
+            model=_model_for_ai(ai),
             bypass_slot=True,
         )
         if isinstance(result, dict) and isinstance(result.get("zh"), str):

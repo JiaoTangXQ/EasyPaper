@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DocumentManagerPlugin, ScrollPlugin, type PluginRegistry } from "@embedpdf/react-pdf-viewer";
 import type { Rect } from "@embedpdf/models";
-import { Volume2, VolumeX, X } from "lucide-react";
+import { BookmarkPlus, Check, Volume2, VolumeX, X } from "lucide-react";
 import api from "@/lib/api";
 import { glossCardPosition, glyphIndexAt, spanAtChar, type GlossSpan } from "./gloss-hit";
 import { textAnchorRects, type TextPage } from "./text-anchor";
@@ -16,12 +16,14 @@ export default function GlossLayer({
   container,
   spans,
   onEnrich,
+  onRememberTerm,
   autoSpeak = false,
 }: {
   registry: PluginRegistry;
   container: HTMLElement | null;
   spans: GlossSpan[];
   onEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
+  onRememberTerm?: (span: GlossSpan) => Promise<void>;
   autoSpeak?: boolean;
 }) {
   const spansByPageRef = useRef(new Map<number, GlossSpan[]>());
@@ -35,6 +37,8 @@ export default function GlossLayer({
   const [enriching, setEnriching] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [speechLoading, setSpeechLoading] = useState(false);
+  const [remembering, setRemembering] = useState(false);
+  const [rememberedId, setRememberedId] = useState("");
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const dismissedPointer = useRef(false);
   const enrichRequest = useRef(0);
@@ -57,6 +61,7 @@ export default function GlossLayer({
     setSpeaking(false);
     setSpeechLoading(false);
     setEnriching(false);
+    setRemembering(false);
     setPlace(null);
     setCardPoint(null);
     setMarks([]);
@@ -250,6 +255,19 @@ export default function GlossLayer({
       const pdf = documentId ? documents.getDocumentState(documentId)?.document : undefined;
       if (current && pdf) void paint(pdf, current.span);
     };
+    const warmPage = (pdf: { pages: unknown[] }, pageIndex: number) => {
+      if (pageIndex < 0 || pageIndex >= pdf.pages.length) return;
+      // Start extraction while the reader is idle. A click then reuses this
+      // promise instead of waiting for PDFium to build the page text map.
+      void textPage(pdf, pageIndex).catch(() => undefined);
+    };
+    const warmCurrentPage = (pageNumber?: number) => {
+      const documentId = documents.getActiveDocumentId();
+      const pdf = documentId ? documents.getDocumentState(documentId)?.document : undefined;
+      if (!pdf) return;
+      const current = (pageNumber ?? scroll?.getCurrentPage?.() ?? 1) - 1;
+      warmPage(pdf, current);
+    };
     const refreshAfterLayout = () => window.requestAnimationFrame(refresh);
 
     const onDocumentPointerDown = (event: PointerEvent) => {
@@ -268,7 +286,18 @@ export default function GlossLayer({
     const scroll = registry.getPlugin<ScrollPlugin>("scroll")?.provides?.();
     if (!scroll) return;
     bind();
-    const stops = [scroll.onLayoutReady(() => bind()), scroll.onScroll(refresh)];
+    warmCurrentPage();
+    const stops = [
+      scroll.onLayoutReady(() => {
+        bind();
+        warmCurrentPage();
+      }),
+      scroll.onPageChange((event) => {
+        warmCurrentPage(event.pageNumber);
+        refresh();
+      }),
+      scroll.onScroll(refresh),
+    ];
     try {
       const zoom = registry.getPlugin("zoom")?.provides?.() as
         | { onZoomChange?(listener: () => void): () => void }
@@ -435,6 +464,19 @@ export default function GlossLayer({
   };
   const canSpeak = typeof Audio !== "undefined" || "speechSynthesis" in window;
 
+  const remember = async () => {
+    if (!onRememberTerm || !place || remembering) return;
+    setRemembering(true);
+    try {
+      await onRememberTerm(place.span);
+      setRememberedId(place.span.id);
+    } catch {
+      // The caller already explained the failure; keep the button available to retry.
+    } finally {
+      setRemembering(false);
+    }
+  };
+
   const point = cardPoint ?? place?.client;
   const card = point
     ? glossCardPosition(point, cardBox, { width: window.innerWidth, height: window.innerHeight })
@@ -466,6 +508,19 @@ export default function GlossLayer({
               >
                 {speaking || speechLoading ? <VolumeX size={16} /> : <Volume2 size={16} />}
               </button>
+              {onRememberTerm ? (
+                <button
+                  type="button"
+                  className="gloss-remember"
+                  aria-label={rememberedId === place.span.id ? "已加入术语记忆" : "加入术语记忆"}
+                  title={rememberedId === place.span.id ? "已加入术语记忆" : "加入术语记忆"}
+                  onClick={() => void remember()}
+                  disabled={remembering || rememberedId === place.span.id}
+                >
+                  {rememberedId === place.span.id ? <Check size={15} /> : <BookmarkPlus size={15} />}
+                  <span>{rememberedId === place.span.id ? "已记住" : remembering ? "保存中" : "记住术语"}</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="gloss-close"

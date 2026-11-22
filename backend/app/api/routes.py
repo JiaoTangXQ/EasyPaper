@@ -22,6 +22,7 @@ from ..services.ai_client import AIError
 from ..services.document_processor import DocumentProcessor
 from ..services.gloss_preparation import remote_worker_ready, resolve_gloss_preparation
 from ..services.job_queue import JobQueue
+from ..services.paper_passport import get_or_create_passport
 from ..services.paper_summarizer import PaperSummarizer
 from ..services.pdf_downloader import PdfDownloader
 from ..services.pdf_metadata import pdf_title
@@ -180,8 +181,19 @@ def create_router(
             )
 
         await asyncio.to_thread(validate_pdf, file_bytes, cfg.processing.max_pages)
+        passport = get_or_create_passport(
+            getattr(task_manager, "db_engine", engine), user.id, file_bytes, file.filename or "document.pdf"
+        )
+        duplicate_of = next(
+            (
+                item.task_id
+                for item in task_manager.list_tasks(user.id, limit=500)
+                if getattr(item, "passport_id", None) == passport.id
+            ),
+            None,
+        )
         task = task_manager.create_task(
-            file.filename or "document.pdf", user_id=user.id, mode=mode, highlight=highlight
+            file.filename or "document.pdf", user_id=user.id, mode=mode, highlight=highlight, passport_id=passport.id
         )
 
         # Save original file
@@ -194,7 +206,7 @@ def create_router(
 
         launch(task, start)
 
-        return {"task_id": task.task_id}
+        return {"task_id": task.task_id, "passport_id": passport.id, "duplicate_of": duplicate_of}
 
     @router.post("/upload-url")
     @limiter.limit("10/minute")
@@ -237,7 +249,18 @@ def create_router(
             )
 
         await asyncio.to_thread(validate_pdf, file_bytes, cfg.processing.max_pages)
-        task = task_manager.create_task(filename, user_id=user.id, mode=body.mode, highlight=body.highlight)
+        passport = get_or_create_passport(getattr(task_manager, "db_engine", engine), user.id, file_bytes, filename)
+        duplicate_of = next(
+            (
+                item.task_id
+                for item in task_manager.list_tasks(user.id, limit=500)
+                if getattr(item, "passport_id", None) == passport.id
+            ),
+            None,
+        )
+        task = task_manager.create_task(
+            filename, user_id=user.id, mode=body.mode, highlight=body.highlight, passport_id=passport.id
+        )
 
         original_path = Path(task_manager.config.storage.temp_dir) / f"{task.task_id}_original.pdf"
         with open(original_path, "wb") as f:
@@ -247,7 +270,7 @@ def create_router(
 
         launch(task, start)
 
-        return {"task_id": task.task_id}
+        return {"task_id": task.task_id, "passport_id": passport.id, "duplicate_of": duplicate_of}
 
     @router.get("/tasks")
     async def list_tasks(
@@ -273,6 +296,7 @@ def create_router(
                 "message": t.message,
                 "mode": t.mode,
                 "highlight": t.highlight,
+                "passport_id": getattr(t, "passport_id", None),
                 "reading": reading.get(t.task_id),
                 "can_read": bool(t.original_pdf_path and Path(t.original_pdf_path).is_file()),
                 "highlight_status": t.highlight_status,
@@ -324,6 +348,9 @@ def create_router(
         if task.highlight_sentences:
             result["highlight_sentences"] = json.loads(task.highlight_sentences)
         result["has_dual_pdf"] = bool(task.result_dual_pdf_path and Path(task.result_dual_pdf_path).exists())
+        result["has_result"] = (task.mode == "gloss" and task.status == TaskStatus.COMPLETED) or bool(
+            task.result_pdf_path and Path(task.result_pdf_path).exists()
+        )
         return result
 
     @router.get("/result/{task_id}/preview", response_class=HTMLResponse)

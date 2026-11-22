@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import fitz
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -111,3 +113,42 @@ def test_chat_history_is_bounded_and_cannot_supply_system_messages(tmp_path):
     ]:
         response = client.post("/api/reading/task-1/ask", json={"question": "问题", "history": history})
         assert response.status_code == 422
+
+
+def test_chat_accepts_a_pasted_image_as_a_multipart_request(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path)
+    image = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(image, format="JPEG")
+    captured = {}
+
+    async def answer(_self, _prompt, context, image_bytes=None):
+        request = json.loads(context)
+        captured.update(
+            question=request["question"],
+            selection=request["selection"],
+            history=request["history"],
+            image_bytes=image_bytes,
+        )
+        return {"answer": "图片里的内容。", "evidence_refs": []}
+
+    monkeypatch.setattr(ReadingService, "ask_model", answer)
+    response = client.post(
+        "/api/reading/task-1/ask-image",
+        data={"question": "请解释这张图", "selection": "", "history": "[]"},
+        files={"image": ("clipboard.jpg", image.getvalue(), "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    assert captured["question"] == "请解释这张图"
+    assert captured["history"] == []
+    assert captured["image_bytes"].startswith(b"\x89PNG")
+
+
+def test_chat_rejects_a_non_image_upload(tmp_path):
+    client, _ = _client(tmp_path)
+    response = client.post(
+        "/api/reading/task-1/ask-image",
+        data={"question": "请解释"},
+        files={"image": ("clipboard.txt", b"not an image", "text/plain")},
+    )
+    assert response.status_code == 415

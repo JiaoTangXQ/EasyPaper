@@ -45,6 +45,14 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      # Keep outbound model calls on the server's private proxy when one is
+      # configured. Internal health and database traffic must bypass it.
+      EASYPAPER_DOWNLOAD_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      HTTP_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      HTTPS_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      ALL_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      NO_PROXY: ${EASYPAPER_NO_PROXY:-localhost,127.0.0.1,db}
+      no_proxy: ${EASYPAPER_NO_PROXY:-localhost,127.0.0.1,db}
       EASYPAPER_GLOSS_PREPARATION: ${EASYPAPER_GLOSS_PREPARATION:-server}
       GLOSS_WORKER_TOKEN: ${GLOSS_WORKER_TOKEN:-}
       KNOWLEDGE_WORKER_TOKEN: ${KNOWLEDGE_WORKER_TOKEN:-}

@@ -15,6 +15,7 @@ class ReadingDocument(SQLModel, table=True):
 class ReadingAid(SQLModel, table=True):
     id: str = Field(primary_key=True)
     task_id: str = Field(index=True)
+    passport_id: str | None = Field(default=None, foreign_key="paperpassport.id", index=True)
     block_id: str = Field(index=True)
     content_json: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -38,6 +39,7 @@ class ReaderDocument(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
+    passport_id: str | None = Field(default=None, foreign_key="paperpassport.id", index=True)
     fingerprint: str = Field(index=True)
     title: str
     created_at: datetime = Field(default_factory=datetime.utcnow)

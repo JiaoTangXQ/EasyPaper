@@ -58,7 +58,27 @@ def _fake_cursor(tmp_path: Path, body: str) -> str:
 
 
 def _cursor_config(executable: str) -> LLMConfig:
-    return LLMConfig(provider="cursor", cursor={"executable": executable, "timeout_seconds": 10, "model": "fixture-model"})
+    return LLMConfig(
+        provider="cursor", cursor={"executable": executable, "timeout_seconds": 10, "model": "fixture-model"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_client_passes_selected_model_and_timeout(monkeypatch):
+    config = LLMConfig(provider="api", api_key="test-key", model="default-model")
+    client = AIClient(config)
+    captured = {}
+
+    async def fake_api(system, user, image_bytes, max_tokens, json_mode, model, timeout_seconds):
+        captured.update(model=model, timeout_seconds=timeout_seconds, max_tokens=max_tokens, json_mode=json_mode)
+        return "ok"
+
+    monkeypatch.setattr(client, "_api", fake_api)
+    result = await client.complete(
+        "system", "user", max_tokens=123, json_mode=True, model="selected-model", timeout_seconds=7
+    )
+    assert result == "ok"
+    assert captured == {"model": "selected-model", "timeout_seconds": 7, "max_tokens": 123, "json_mode": True}
 
 
 def test_cursor_environment_sets_user_when_missing(monkeypatch):

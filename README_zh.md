@@ -240,8 +240,8 @@ llm:
   provider: "api"                     # "api" 或 "codex"
   api_key: "YOUR_API_KEY"             # provider=api 时填写；Codex 模式不需要
   base_url: "https://api.example.com/v1"
-  model: "gemini-2.5-flash"           # 翻译/简化/知识提取使用的模型
-  judge_model: "gemini-2.5-flash"
+  model: "deepseek-v4.1-flash-1017"   # 翻译/简化/知识提取使用的模型
+  judge_model: "deepseek-v4.1-flash-1017"
   codex:
     executable: "codex"
     model: ""                          # 空值使用本机 Codex 默认模型

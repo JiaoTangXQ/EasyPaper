@@ -1,9 +1,23 @@
 import { useWorkspaceValue, useWorkspaceScroll } from "@/components/workspace/useWorkspaceMemory";
 import { useState, useEffect, useCallback } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import {
+  ArrowRight,
+  BookOpen,
+  Download,
+  Loader2,
+  MoreHorizontal,
+  NotebookPen,
+  RotateCcw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PageHeader, EmptyState } from "@/components/workspace/PageHeader";
+import { PageHeader, EmptyState, ListSkeleton } from "@/components/workspace/PageHeader";
+import KnowledgeNav from "@/components/knowledge/KnowledgeNav";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,21 +25,11 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import {
-  FileText,
-  Search,
-  Download,
-  Trash2,
-  BookOpen,
-  Network,
-  Loader2,
-  MoreHorizontal,
-  ArrowRight,
-  NotebookPen,
-} from "lucide-react";
-import { toast } from "sonner";
+import { confirmAction } from "@/lib/confirm";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
+import { friendlyDate } from "@/lib/format";
+import { EXPORT_FORMATS, exportKnowledge, type ExportFormat } from "@/lib/knowledge-export";
 
 interface Paper {
   id: string;
@@ -38,13 +42,54 @@ interface Paper {
   created_at: string | null;
 }
 
+const STATUS: Record<string, { label: string; tone: string }> = {
+  completed: { label: "已整理", tone: "is-ok" },
+  extracting: { label: "正在整理", tone: "is-warn" },
+  error: { label: "整理失败", tone: "is-danger" },
+  failed: { label: "整理失败", tone: "is-danger" },
+};
+
+export function ExportMenu({ disabled }: { disabled?: boolean }) {
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  const run = async (format: ExportFormat, label: string) => {
+    setExporting(format);
+    try {
+      await exportKnowledge(format);
+      toast.success(`已导出 ${label}`);
+    } catch {
+      toast.error("导出失败。");
+    } finally {
+      setExporting(null);
+    }
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" disabled={disabled || exporting !== null}>
+          {exporting ? <Loader2 className="spin" /> : <Download />}
+          导出
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {EXPORT_FORMATS.map(({ format, label, hint }) => (
+          <DropdownMenuItem key={format} onSelect={() => void run(format, label)}>
+            {label}
+            <span className="menu-hint" aria-hidden="true">
+              {hint}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export default function KnowledgeBase() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [search, setSearch] = useWorkspaceValue("knowledge:search");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState("");
-  const [exporting, setExporting] = useState(false);
   const navigate = useNavigate();
   useWorkspaceScroll("knowledge", !loading);
   const fetchPapers = useCallback(async () => {
@@ -67,61 +112,24 @@ export default function KnowledgeBase() {
     const timer = window.setInterval(() => void fetchPapers(), 4000);
     return () => window.clearInterval(timer);
   }, [processing, fetchPapers]);
-  const handleDelete = async (paperId: string) => {
-    if (!window.confirm("确定删除这篇论文的知识笔记、关系和复习卡吗？此操作无法撤销。")) return;
+
+  const handleDelete = async (paper: Paper) => {
+    const ok = await confirmAction({
+      title: `删除「${paper.title || "未命名论文"}」的知识笔记？`,
+      description: "会删除这篇论文整理出的发现、概念、关系、复习卡和你的个人笔记。论文本身和阅读批注不受影响。此操作无法撤销。",
+      confirmLabel: "删除笔记",
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await api.delete(`/api/knowledge/papers/${paperId}`);
-      setPapers((old) => old.filter((p) => p.id !== paperId));
+      await api.delete(`/api/knowledge/papers/${paper.id}`);
+      setPapers((old) => old.filter((p) => p.id !== paper.id));
       toast.success("知识笔记已删除。");
     } catch (err) {
       toast.error(getApiErrorMessage(err, "删除失败，请重试。"));
     }
   };
-  const handleExport = async (format: string) => {
-    try {
-      let url = "";
-      let filename = "";
-      switch (format) {
-        case "json":
-          url = "/api/knowledge/export/json";
-          filename = "easypaper_knowledge.json";
-          break;
-        case "bibtex":
-          url = "/api/knowledge/export/bibtex";
-          filename = "easypaper_references.bib";
-          break;
-        case "obsidian":
-          url = "/api/knowledge/export/obsidian";
-          filename = "easypaper_vault.zip";
-          break;
-        case "csv":
-          url = "/api/knowledge/export/csv";
-          filename = "easypaper_csv.zip";
-          break;
-        case "csl":
-          url = "/api/knowledge/export/csl-json";
-          filename = "easypaper_references.json";
-          break;
-        default:
-          return;
-      }
 
-      const response = await api.get(url, { responseType: "blob" });
-      const blob = new Blob([response.data]);
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode?.removeChild(link);
-      URL.revokeObjectURL(link.href);
-      toast.success(`已导出为 ${format.toUpperCase()}`);
-    } catch {
-      toast.error("导出失败。");
-    }
-  };
-
-  const filtered = papers.filter((p) => (p.title || "").toLowerCase().includes(search.trim().toLowerCase()));
   const startExtract = async (paper: Paper, toastMessage: string) => {
     if (!paper.task_id || retrying) return;
     setRetrying(paper.id);
@@ -135,128 +143,71 @@ export default function KnowledgeBase() {
       setRetrying("");
     }
   };
+
+  const query = search.trim().toLowerCase();
+  const filtered = papers.filter((p) => (p.title || "").toLowerCase().includes(query));
   return (
-    <div className="page-stack">
-      <PageHeader
-        title="知识笔记"
-        description="回看论文中的发现和自己的笔记。"
-        actions={
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" disabled={exporting || !papers.length}>
-                {exporting ? <Loader2 className="animate-spin" /> : <Download />}导出
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {[
-                ["json", "知识备份 · JSON"],
-                ["obsidian", "Obsidian 笔记 · ZIP"],
-                ["bibtex", "文献引用 · BibTeX"],
-                ["csl", "文献引用 · CSL-JSON"],
-                ["csv", "论文表格 · CSV ZIP"],
-              ].map(([format, label]) => (
-                <DropdownMenuItem
-                  key={format}
-                  onSelect={() => {
-                    setExporting(true);
-                    void handleExport(format).finally(() => setExporting(false));
-                  }}
-                >
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
-      />
-      <nav className="knowledge-nav" aria-label="知识浏览方式">
-        <NavLink end to="/knowledge">
-          <NotebookPen size={17} />
-          按论文查看
-        </NavLink>
-        <NavLink to="/knowledge/graph">
-          <Network size={17} />
-          关联图谱
-        </NavLink>
-      </nav>
+    <div className="page">
+      <div className="knowledge-head">
+        <PageHeader
+          title="知识笔记"
+          description="论文里的发现、概念和你的想法，都整理在这里。"
+          actions={<ExportMenu disabled={!papers.length} />}
+        />
+        <KnowledgeNav />
+      </div>
       {loading ? (
-        <div className="workspace-empty" role="status">
-          <Loader2 className="animate-spin text-primary" />
-          <p>正在加载知识笔记…</p>
-        </div>
+        <ListSkeleton rows={3} label="正在加载知识笔记…" />
       ) : error ? (
         <EmptyState title="知识笔记加载失败" description={error} error>
           <Button onClick={() => void fetchPapers()}>重试</Button>
         </EmptyState>
       ) : (
-        <section>
-          <div className="section-heading">
-            <h2>
-              论文 <span className="text-sm font-normal text-muted-foreground">{papers.length}</span>
-            </h2>
+        <section className="section ep-enter">
+          <div className="section-toolbar">
+            <div className="section-heading">
+              <h2>
+                论文 <span className="section-count">{papers.length}</span>
+              </h2>
+            </div>
             <div className="search-field">
-              <Search size={16} />
+              <Search aria-hidden="true" />
               <Input
                 aria-label="搜索知识笔记中的论文"
                 placeholder="搜索论文标题"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              {search && (
+                <button type="button" className="search-clear" aria-label="清除知识笔记搜索" onClick={() => setSearch("")}>
+                  <X size={14} />
+                </button>
+              )}
             </div>
           </div>
           {filtered.length ? (
-            <div className="paper-list">
+            <div className="note-card-grid ep-stagger">
               {filtered.map((paper) => {
                 const status = paper.extraction_status;
-                const failed = ["error", "failed"].includes(status);
-                const extracting = status === "extracting";
+                const meta = STATUS[status] ?? { label: "尚未整理", tone: "" };
+                const failed = status === "error" || status === "failed";
                 const pending = status === "pending";
-                const statusLabel =
-                  status === "completed"
-                    ? "已整理"
-                    : failed
-                      ? "整理失败"
-                      : extracting
-                        ? "正在整理知识"
-                        : "尚未整理";
-                const statusClass =
-                  status === "completed" ? "is-ready" : failed ? "is-error" : extracting ? "is-pending" : "is-muted";
+                const open = () => navigate(`/knowledge/paper/${paper.id}`);
                 return (
-                  <article key={paper.id} className="paper-row">
-                    <div className="paper-row-main">
-                      <FileText size={20} />
-                      <div className="paper-row-text">
-                        <button className="paper-title" onClick={() => navigate(`/knowledge/paper/${paper.id}`)}>
-                          {paper.title || "未命名论文"}
-                        </button>
-                        <div className="paper-meta">
-                          <span className={`task-status ${statusClass}`}>{statusLabel}</span>
-                          {paper.year && <span>{paper.year}</span>}
-                          {paper.venue && <span>{paper.venue}</span>}
-                        </div>
-                        {paper.doi && <p className="text-xs text-muted-foreground mt-2 break-all">DOI: {paper.doi}</p>}
-                      </div>
-                    </div>
-                    <div className="paper-row-actions">
-                      <Button size="sm" variant="outline" onClick={() => navigate(`/knowledge/paper/${paper.id}`)}>
-                        查看笔记
-                        <ArrowRight />
-                      </Button>
-                      {(pending || failed) && paper.task_id && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={Boolean(retrying)}
-                          onClick={() =>
-                            void startExtract(paper, pending ? "已开始整理知识笔记。" : "已重新开始整理。")
-                          }
-                        >
-                          {retrying === paper.id ? "启动中…" : pending ? "开始整理" : "重新整理"}
-                        </Button>
-                      )}
+                  <article key={paper.id} className="note-card">
+                    <div className="note-card-top">
+                      <span className={`pill ${meta.tone}`}>
+                        {status === "extracting" ? <Loader2 className="spin" aria-hidden="true" /> : null}
+                        {meta.label}
+                      </span>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" aria-label={`${paper.title} 的更多操作`}>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`${paper.title} 的更多操作`}
+                            style={{ position: "relative", zIndex: 1 }}
+                          >
                             <MoreHorizontal />
                           </Button>
                         </DropdownMenuTrigger>
@@ -264,32 +215,70 @@ export default function KnowledgeBase() {
                           {paper.task_id && (
                             <>
                               <DropdownMenuItem onSelect={() => navigate(`/reader/${paper.task_id}`)}>
-                                <BookOpen className="mr-2 h-4 w-4" />
+                                <BookOpen />
                                 继续阅读
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                             </>
                           )}
-                          <DropdownMenuItem className="text-destructive" onSelect={() => void handleDelete(paper.id)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
+                          <DropdownMenuItem danger onSelect={() => void handleDelete(paper)}>
+                            <Trash2 />
                             删除知识笔记
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                    </div>
+                    <div>
+                      <h3>
+                        <button type="button" onClick={open}>
+                          {paper.title || "未命名论文"}
+                        </button>
+                      </h3>
+                      <p className="note-card-meta">
+                        {[paper.year, paper.venue, paper.created_at ? `${friendlyDate(paper.created_at)}加入` : null]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </div>
+                    <div className="note-card-actions">
+                      <Button size="sm" variant="secondary" onClick={open}>
+                        查看笔记
+                        <ArrowRight />
+                      </Button>
+                      {(pending || failed) && paper.task_id ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={Boolean(retrying)}
+                          onClick={() => void startExtract(paper, pending ? "已开始整理知识笔记。" : "已重新开始整理。")}
+                        >
+                          {retrying === paper.id ? <Loader2 className="spin" /> : failed ? <RotateCcw /> : <NotebookPen />}
+                          {retrying === paper.id ? "启动中…" : pending ? "开始整理" : "重新整理"}
+                        </Button>
+                      ) : (
+                        <span />
+                      )}
                     </div>
                   </article>
                 );
               })}
             </div>
           ) : (
-            <EmptyState
-              title={search ? "没有匹配的论文" : "还没有知识笔记"}
-              description={search ? "试试其他标题，或清除搜索。" : "在“我的论文”的更多操作中，选择“整理知识笔记”。"}
-            >
-              <Button onClick={() => (search ? setSearch("") : navigate("/dashboard"))}>
-                {search ? "清除搜索" : "选择一篇论文"}
-              </Button>
-            </EmptyState>
+            <div className="card">
+              <EmptyState
+                title={search ? "没有匹配的论文" : "还没有知识笔记"}
+                description={
+                  search
+                    ? "试试其他标题，或清除搜索。"
+                    : "打开一篇读完的论文，在“我的论文”的更多操作里选择“整理知识笔记”。"
+                }
+                icon={<NotebookPen />}
+              >
+                <Button onClick={() => (search ? setSearch("") : navigate("/dashboard"))}>
+                  {search ? "清除搜索" : "选择一篇论文"}
+                </Button>
+              </EmptyState>
+            </div>
           )}
         </section>
       )}

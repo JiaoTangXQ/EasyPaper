@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import zipfile
@@ -18,6 +19,7 @@ from ..models.user import User
 from ..services.job_queue import JobQueue
 from ..services.reader_backup import MAX_ARCHIVE_BYTES, restore_archive
 from ..services.reader_geometry import public_units
+from ..services.reader_preview import PagePreviews
 from ..services.reader_tts import MAX_TTS_CHARS, ReaderTTS, ReaderTTSUnavailable
 from ..services.synced_reader import SyncedReader
 from .deps import get_current_user
@@ -47,6 +49,7 @@ def create_reader_router(reading):
     queue = getattr(reading, "job_queue", None) or JobQueue(reading.config.processing)
     service = getattr(reading, "synced_reader", None) or SyncedReader(reading)
     tts = ReaderTTS()
+    previews = PagePreviews()
     reading.synced_reader = service
 
     def resume_alignment(bundle, background, opening=False):
@@ -82,6 +85,45 @@ def create_reader_router(reading):
             filename=f"{version.kind}.pdf",
             headers={"Cache-Control": "private, max-age=31536000, immutable"},
         )
+
+    @router.get("/documents/{document_id}/versions/{version_id}/pages/{page}/preview")
+    async def page_preview(
+        document_id: str,
+        version_id: str,
+        page: int,
+        width: int = 1200,
+        user: User = Depends(get_current_user),
+    ):
+        """One page as a JPEG, shown while the browser is still downloading the full PDF."""
+        service.owned(document_id, user.id)
+        version = service.version(document_id, version_id)
+        if not Path(version.path).is_file():
+            raise HTTPException(404, "存档文件缺失；批注仍保留，请从备份恢复文件")
+        try:
+            image = await previews.get(version.path, version.fingerprint, page, width)
+        except IndexError as exc:
+            raise HTTPException(404, "页面不存在") from exc
+        return Response(
+            image,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    @router.get("/documents/{document_id}/builds/{kind}/pages/{page}/preview")
+    async def partial_page_preview(
+        document_id: str,
+        kind: str,
+        page: int,
+        width: int = 1200,
+        user: User = Depends(get_current_user),
+    ):
+        """A page that a running build has finished, readable before the whole version exists."""
+        service.owned(document_id, user.id)
+        image = await asyncio.to_thread(service.partial_page, document_id, kind, page, width)
+        if image is None:
+            raise HTTPException(404, "这一页还没有生成")
+        # A retry may render the page differently; the complete version replaces it.
+        return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @router.get("/documents/{document_id}/versions/{version_id}/text")
     async def text_index(document_id: str, version_id: str, user: User = Depends(get_current_user)):

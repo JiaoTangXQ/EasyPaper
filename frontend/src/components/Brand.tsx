@@ -9,10 +9,10 @@ export function BrandMark({ size = 32 }: { size?: number }) {
   );
 }
 
-export default function Brand() {
+export default function Brand({ markSize = 32 }: { markSize?: number }) {
   return (
     <span className="brand-lockup" role="img" aria-label="EasyPaper">
-      <BrandMark />
+      <BrandMark size={markSize} />
       <img className="brand-wordmark" src="/brand/wordmark.svg" alt="" aria-hidden="true" width="138" height="31" />
     </span>
   );

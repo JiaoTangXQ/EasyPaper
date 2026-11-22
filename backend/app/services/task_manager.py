@@ -8,12 +8,13 @@ from pathlib import Path
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlmodel import Session, select
 
-logger = logging.getLogger(__name__)
-
 from ..core.config import get_config
 from ..core.db import engine
-from ..models.reading import ReadingAid, ReadingDocument, ReadingState
+from ..models.knowledge import PaperKnowledge
+from ..models.reading import ReaderTaskLink, ReadingAid, ReadingDocument, ReadingState
 from ..models.task import Task, TaskResult, TaskStatus, TaskTitleTranslation
+
+logger = logging.getLogger(__name__)
 
 
 class TaskManager:
@@ -23,11 +24,28 @@ class TaskManager:
         # Ensure temp dir exists
         Path(self.config.storage.temp_dir).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def db_engine(self):
+        """Expose the active engine so route-level records follow test/runtime overrides."""
+        return engine
+
     def create_task(
-        self, filename: str, user_id: int | None = None, mode: str = "translate", highlight: bool = False
+        self,
+        filename: str,
+        user_id: int | None = None,
+        mode: str = "translate",
+        highlight: bool = False,
+        passport_id: str | None = None,
     ) -> Task:
         task_id = uuid.uuid4().hex
-        task = Task(task_id=task_id, filename=filename, user_id=user_id, mode=mode, highlight=highlight)
+        task = Task(
+            task_id=task_id,
+            filename=filename,
+            user_id=user_id,
+            mode=mode,
+            highlight=highlight,
+            passport_id=passport_id,
+        )
         with Session(engine) as session:
             session.add(task)
             session.commit()
@@ -69,7 +87,17 @@ class TaskManager:
 
         with Session(engine) as session:
             states = session.exec(select(ReadingState).where(ReadingState.user_id == user_id)).all()
-            documents = {d.task_id: json.loads(d.document_json) for d in session.exec(select(ReadingDocument)).all()}
+            # Only this user's documents: the list endpoint is polled every few seconds,
+            # and parsing every stored document (of every user) made it grow with the server.
+            task_ids = {state.task_id for state in states}
+            documents = (
+                {
+                    d.task_id: json.loads(d.document_json)
+                    for d in session.exec(select(ReadingDocument).where(ReadingDocument.task_id.in_(task_ids))).all()
+                }
+                if task_ids
+                else {}
+            )
             result = {}
             for state in states:
                 blocks = documents.get(state.task_id, {}).get("blocks", [])
@@ -193,9 +221,31 @@ class TaskManager:
                     Path(task.original_pdf_path).unlink(missing_ok=True)
                 except Exception:
                     pass
-            for model in (ReadingAid, ReadingState, ReadingDocument, TaskTitleTranslation):
+            for model in (ReadingState, ReadingDocument, ReaderTaskLink, TaskTitleTranslation):
                 for row in session.exec(select(model).where(model.task_id == task_id)).all():
                     session.delete(row)
+            # A cached aid belongs to the stable source passport. Keep it when
+            # another import of the same paper still exists.
+            for aid in session.exec(select(ReadingAid).where(ReadingAid.task_id == task_id)).all():
+                sibling = (
+                    session.exec(
+                        select(Task).where(Task.passport_id == aid.passport_id).where(Task.task_id != task_id)
+                    ).first()
+                    if aid.passport_id
+                    else None
+                )
+                if not sibling:
+                    session.delete(aid)
+            for paper in session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task_id)).all():
+                sibling = (
+                    session.exec(
+                        select(Task).where(Task.passport_id == paper.passport_id).where(Task.task_id != task_id)
+                    ).first()
+                    if paper.passport_id
+                    else None
+                )
+                paper.task_id = sibling.task_id if sibling else None
+                session.add(paper)
             session.delete(task)
             session.commit()
 

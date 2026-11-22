@@ -1,3 +1,10 @@
+export interface EvidenceRef {
+  block_id: string;
+  page?: number;
+  quote?: string;
+  bbox?: number[];
+}
+
 export interface GraphNode {
   id: string;
   name: string;
@@ -5,6 +12,9 @@ export interface GraphNode {
   definition?: string;
   importance: number;
   paper_id: string;
+  paper_title?: string;
+  task_id?: string | null;
+  evidence_refs?: EvidenceRef[];
 }
 
 export interface GraphEdge {
@@ -13,6 +23,9 @@ export interface GraphEdge {
   target: string;
   type: string;
   description?: string;
+  confidence?: number;
+  paper_id?: string;
+  evidence_refs?: EvidenceRef[];
 }
 
 export const NODE_WIDTH = 214;

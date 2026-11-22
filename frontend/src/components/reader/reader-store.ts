@@ -45,13 +45,20 @@ export type SharedAnnotation = {
   alignment_message: string;
   updated_at: string;
 };
+export type ReaderBuild = {
+  kind: ReaderMode;
+  status: string;
+  error: string;
+  /** Pages a running translation has finished; readable before the complete version exists. */
+  pages?: { total: number; done: number[] };
+};
 export type ReaderBundle = {
   document_id: string;
   user_id: number;
   title: string;
   versions: ReaderVersion[];
   annotations: SharedAnnotation[];
-  builds: { kind: ReaderMode; status: string; error: string }[];
+  builds: ReaderBuild[];
 };
 export type PendingOperation = {
   operation_id: string;

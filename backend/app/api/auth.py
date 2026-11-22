@@ -7,12 +7,11 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
-from ..services.gloss_preparation import remote_worker_ready
-from ..services.knowledge_preparation import remote_worker_ready as knowledge_remote_worker_ready
 from ..core.config import get_config
 from ..core.db import get_session
 from ..core.security import create_access_token, get_password_hash, verify_password
 from ..models.user import Token, User, UserCreate, UserRead
+from ..services.gloss_preparation import remote_worker_ready
 
 router = APIRouter(tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
@@ -77,6 +76,4 @@ def features():
         "max_pages": config.processing.max_pages,
         "gloss_preparation_site": config.processing.gloss_preparation,
         "gloss_worker_configured": remote_worker_ready(config),
-        "knowledge_preparation_site": config.processing.knowledge_preparation,
-        "knowledge_worker_configured": knowledge_remote_worker_ready(config),
     }

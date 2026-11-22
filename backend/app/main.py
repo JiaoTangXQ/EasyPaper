@@ -16,13 +16,14 @@ from sqlmodel import Session
 from .api.agent_deps import MCPAuthMiddleware
 from .api.agent_routes import create_agent_router
 from .api.auth import router as auth_router
-from .api.settings_routes import router as settings_router
-from .api.knowledge_routes import create_knowledge_router
 from .api.gloss_worker_routes import create_gloss_worker_router
+from .api.knowledge_routes import create_knowledge_router
 from .api.knowledge_worker_routes import create_knowledge_worker_router
 from .api.reader_routes import create_reader_router
 from .api.reading_routes import create_reading_router
 from .api.routes import create_router
+from .api.settings_routes import router as settings_router
+from .api.term_routes import create_term_router
 from .core.config import get_config
 from .core.db import engine, init_db
 from .core.logger import setup_logging
@@ -30,9 +31,9 @@ from .mcp.server import create_mcp_server
 from .services.ai_client import AIClient
 from .services.document_processor import DocumentProcessor
 from .services.gloss_worker_service import GlossWorkerService
-from .services.knowledge_worker_service import KnowledgeWorkerService
 from .services.job_queue import JobQueue
 from .services.knowledge_extractor import KnowledgeExtractor
+from .services.knowledge_worker_service import KnowledgeWorkerService
 from .services.reading_service import ReadingService
 from .services.synced_reader import SyncedReader
 from .services.task_manager import TaskManager
@@ -135,6 +136,7 @@ app.include_router(
     create_knowledge_router(knowledge_extractor, job_queue, knowledge_worker_service=knowledge_worker_service)
 )
 app.include_router(create_reading_router(reading_service))
+app.include_router(create_term_router())
 app.include_router(create_reader_router(reading_service))
 app.router.routes.extend(mcp_server.streamable_http_app().routes)
 
@@ -166,6 +168,7 @@ async def on_startup() -> None:
                 continue
             build.status, build.error = "error", "生成因服务重启中断，可重试；已有版本和批注仍保留"
             session.add(build)
+            reading_service.synced_reader.discard_partial(build.document_id, build.kind)
         session.commit()
     Path(config.storage.temp_dir).mkdir(parents=True, exist_ok=True)
     # Reconcile tasks orphaned by a restart (in-memory processing is gone).

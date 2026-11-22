@@ -10,11 +10,11 @@ from app.core.db import get_session
 def engine_fixture():
     from app.models import (
         agent,  # noqa: F401
-        knowledge,  # noqa: F401
-        task,  # noqa: F401
-        reading,  # noqa: F401
         gloss_worker,  # noqa: F401
+        knowledge,  # noqa: F401
         knowledge_worker,  # noqa: F401
+        reading,  # noqa: F401
+        task,  # noqa: F401
         user,  # noqa: F401
     )
 

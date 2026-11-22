@@ -38,10 +38,10 @@ def init_db():
     # Import models to register them with SQLModel metadata
     from ..models import (
         agent,  # noqa: F401
-        knowledge,  # noqa: F401
-        reading,  # noqa: F401
         gloss_worker,  # noqa: F401
+        knowledge,  # noqa: F401
         knowledge_worker,  # noqa: F401
+        reading,  # noqa: F401
         task,  # noqa: F401
         usage,  # noqa: F401
         user,  # noqa: F401
@@ -62,6 +62,7 @@ def init_db():
 
     SQLModel.metadata.create_all(engine)
     _migrate_db()
+    _migrate_new_columns()
     # Additive migration for existing SQLite and PostgreSQL installations.
     from sqlalchemy import inspect, text
 
@@ -93,6 +94,29 @@ def _migrate_db() -> None:
                 if column not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                     conn.commit()
+                    logger.info("Migrated: added %s.%s", table, column)
+            except Exception as exc:
+                logger.debug("Migration skip %s.%s: %s", table, column, exc)
+
+
+def _migrate_new_columns() -> None:
+    """Add fields introduced after the first production schema on every backend."""
+    from sqlalchemy import inspect, text
+
+    migrations = [
+        ("task", "passport_id", "TEXT"),
+        ("paperknowledge", "passport_id", "TEXT"),
+        ("readerdocument", "passport_id", "TEXT"),
+        ("readingaid", "passport_id", "TEXT"),
+        ("knowledgeentity", "evidence_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("knowledgerelationship", "evidence_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ]
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, column, col_type in migrations:
+            try:
+                if column not in {item["name"] for item in inspector.get_columns(table)}:
+                    connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {col_type}'))
                     logger.info("Migrated: added %s.%s", table, column)
             except Exception as exc:
                 logger.debug("Migration skip %s.%s: %s", table, column, exc)

@@ -3,6 +3,14 @@ import { rectsWithinSlice } from "@embedpdf/plugin-selection";
 
 export type TextAnchor = { text: string; prefix?: string; suffix?: string };
 export type TextPage = { geometry: PdfPageGeometry; characters: { index: number; text: string }[] };
+type CharRange = { from: number; to: number };
+type PreparedTextPage = { text: string; indexes: number[]; glyphs: Map<number, PdfPageGeometry["runs"][number]["glyphs"][number]> };
+
+// A page is shared by every hit test and highlight on that page. Keep the
+// normalized character stream and glyph lookup alongside it so locating the
+// next term does not rebuild the same data for every candidate span.
+const preparedPages = new WeakMap<TextPage, PreparedTextPage>();
+const anchorRanges = new WeakMap<TextPage, WeakMap<TextAnchor, CharRange | null>>();
 const normalize = (text: string) =>
   text
     .normalize("NFKC")
@@ -24,7 +32,9 @@ function matchesAnchorText(actual: string, expected: string): boolean {
 
 type LocatedAnchor = { indexes: number[]; start: number; needle: string };
 
-function locateAnchor(page: TextPage, anchor: TextAnchor): LocatedAnchor | null {
+function prepareTextPage(page: TextPage): PreparedTextPage {
+  const cached = preparedPages.get(page);
+  if (cached) return cached;
   let text = "";
   const indexes: number[] = [];
   const glyphs = new Map(
@@ -53,6 +63,13 @@ function locateAnchor(page: TextPage, anchor: TextAnchor): LocatedAnchor | null 
     text += value;
     for (let offset = 0; offset < value.length; offset++) indexes.push(char.index);
   }
+  const prepared = { text, indexes, glyphs };
+  preparedPages.set(page, prepared);
+  return prepared;
+}
+
+function locateAnchor(page: TextPage, anchor: TextAnchor): LocatedAnchor | null {
+  const { text, indexes } = prepareTextPage(page);
   const needle = normalize(anchor.text);
   if (!needle) return null;
   const literal = needle.split("\u0000").reduce((longest, part) => (part.length > longest.length ? part : longest), "");
@@ -76,10 +93,21 @@ function locateAnchor(page: TextPage, anchor: TextAnchor): LocatedAnchor | null 
 
 /** Inclusive PDF character indexes covered by one prepared span. */
 export function textAnchorCharRange(page: TextPage, anchor: TextAnchor): { from: number; to: number } | null {
+  let cache = anchorRanges.get(page);
+  if (!cache) {
+    cache = new WeakMap<TextAnchor, CharRange | null>();
+    anchorRanges.set(page, cache);
+  }
+  if (cache.has(anchor)) return cache.get(anchor) || null;
   const located = locateAnchor(page, anchor);
-  if (!located) return null;
+  if (!located) {
+    cache.set(anchor, null);
+    return null;
+  }
   const end = located.start + located.needle.length - 1;
-  return { from: located.indexes[located.start], to: located.indexes[end] };
+  const range = { from: located.indexes[located.start], to: located.indexes[end] };
+  cache.set(anchor, range);
+  return range;
 }
 
 /** Locate meaning-bearing text in this renderer's character stream. No source coordinates. */

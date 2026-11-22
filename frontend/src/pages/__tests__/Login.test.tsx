@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Login from "../Login";
 import api from "@/lib/api";
+import { resetFeaturesCache } from "@/lib/features";
 
 // Mock sonner
 vi.mock("sonner", () => ({
@@ -30,6 +31,7 @@ const renderLogin = () =>
 
 describe("登录页", () => {
   beforeEach(() => {
+    resetFeaturesCache();
     vi.mocked(api.get).mockResolvedValue({ data: { registration: false, local_sync: false } });
   });
   it("渲染登录表单", () => {

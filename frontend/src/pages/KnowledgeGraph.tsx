@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -10,13 +10,15 @@ import {
   X,
   List,
   Network,
-  NotebookPen,
   ChevronRight,
   ChevronLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader, EmptyState } from "@/components/workspace/PageHeader";
 import GraphCanvas from "@/components/knowledge/GraphCanvas";
+import KnowledgeNav from "@/components/knowledge/KnowledgeNav";
+import { Select } from "@/components/ui/input";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { getApiErrorMessage } from "@/lib/errors";
 import {
   indexGraph,
@@ -114,22 +116,16 @@ export default function KnowledgeGraph() {
   const showingResults = query.length > 0 || type !== "all";
 
   return (
-    <div className="page-stack concept-page">
-      <PageHeader title="关联图谱" description="从一个概念出发，沿着关系读懂论文。" />
-      <nav className="knowledge-nav" aria-label="知识浏览方式">
-        <NavLink end to="/knowledge">
-          <NotebookPen size={17} />
-          按论文查看
-        </NavLink>
-        <NavLink to="/knowledge/graph">
-          <Network size={17} />
-          关联图谱
-        </NavLink>
-      </nav>
+    <div className="page concept-page">
+      <div className="knowledge-head">
+        <PageHeader title="概念图谱" description="从一个概念出发，沿着关系读懂论文。" />
+        <KnowledgeNav />
+      </div>
       {loading ? (
-        <div className="workspace-empty" role="status">
-          <Loader2 className="animate-spin text-primary" />
-          <p>正在加载概念与关系…</p>
+        <div className="concept-workbench" role="status" aria-label="正在加载概念与关系">
+          <div className="concept-map-stage" style={{ display: "grid", placeItems: "center" }}>
+            <Loader2 className="spin" style={{ color: "var(--faint)" }} />
+          </div>
         </div>
       ) : error ? (
         <EmptyState title="图谱加载失败" description={error} error>
@@ -163,30 +159,24 @@ export default function KnowledgeGraph() {
                   </button>
                 )}
               </div>
-              <select aria-label="筛选概念类型" value={type} onChange={(event) => setType(event.target.value)}>
+              <Select className="concept-type-select" aria-label="筛选概念类型" value={type} onChange={(event) => setType(event.target.value)}>
                 <option value="all">全部类型</option>
                 {types.map((value) => (
                   <option key={value} value={value}>
                     {TYPE_LABELS[value] || value}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
-            <div className="concept-view-switch" role="group" aria-label="图谱浏览方式">
-              <Button variant="ghost" size="sm" aria-pressed={view === "graph" && !showingResults} onClick={showGraph}>
-                <Network size={16} />
-                图谱
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-pressed={view === "list" || showingResults}
-                onClick={() => setView("list")}
-              >
-                <List size={16} />
-                列表
-              </Button>
-            </div>
+            <SegmentedControl
+              ariaLabel="图谱浏览方式"
+              value={view === "graph" && !showingResults ? "graph" : "list"}
+              onChange={(next) => (next === "graph" ? showGraph() : setView("list"))}
+              options={[
+                { value: "graph", label: "图谱", icon: <Network /> },
+                { value: "list", label: "列表", icon: <List /> },
+              ]}
+            />
           </div>
           <div className="concept-summary">
             <p>
@@ -307,7 +297,7 @@ export default function KnowledgeGraph() {
                       当前概念
                     </span>
                   </div>
-                  <h2>{selected.name}</h2>
+                  <h2 key={selected.id}>{selected.name}</h2>
                   <p className={cn("concept-definition", !selected.definition && "is-empty")}>
                     {selected.definition || "该概念暂未提取定义，可回到来源论文查看。"}
                   </p>
@@ -321,6 +311,28 @@ export default function KnowledgeGraph() {
                       <ArrowUpRight size={16} />
                     </Button>
                   )}
+                  {selected.evidence_refs?.length ? (
+                    <div className="concept-evidence">
+                      <strong>原文证据</strong>
+                      <p>{selected.evidence_refs.length} 个原文位置支持这个概念。</p>
+                      {selected.task_id ? (
+                        <div>
+                          {selected.evidence_refs.slice(0, 4).map((evidence) => (
+                            <Button
+                              key={evidence.block_id}
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                navigate(`/reader/${selected.task_id}?block=${encodeURIComponent(evidence.block_id)}`)
+                              }
+                            >
+                              第 {evidence.page || "?"} 页 · {evidence.block_id}
+                            </Button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {(view === "list" || showingResults) && (
                     <Button variant="ghost" className="concept-show-map" onClick={showGraph}>
                       <Network size={16} />
@@ -346,6 +358,11 @@ export default function KnowledgeGraph() {
                             <ChevronRight size={15} />
                           </span>
                           {edge.description && <span className="concept-relation-description">{edge.description}</span>}
+                          {edge.evidence_refs?.length ? (
+                            <span className="concept-relation-description">
+                              {edge.evidence_refs.length} 个原文证据
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}

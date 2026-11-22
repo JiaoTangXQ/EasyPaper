@@ -446,3 +446,36 @@ test('floating paper chat preserves the PDF, conversation, drafts, retries, and 
   await expect(dialog.getByText('论文通过复用中间状态减少内存占用。')).toHaveCount(0);
   await expect(composer).toHaveValue('');
 });
+
+test('a running translation shows each finished page, then becomes the full Chinese version', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('邮箱').fill('reader-test@example.com');
+  await page.getByLabel('密码').fill('fixture');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.waitForURL('**/dashboard');
+  await page.goto('/reader/translating-fixture');
+  // The task was imported for translation, so the reader may already open in Chinese.
+  const chinese = page.getByRole('button', { name: '中文译文（生成中）', exact: true });
+  await chinese.waitFor();
+  if ((await chinese.getAttribute('aria-pressed')) !== 'true') await chinese.click();
+
+  const status = page.locator('.page-preview-status');
+  await expect(status).toContainText('已完成 1 / 3 页');
+  await expect(page.getByAltText('第 1 页预览')).toBeVisible();
+  await expect(page.getByText('正在翻译第 2 页…')).toBeVisible();
+  // Not-yet-translated pages are never requested.
+  const requested = [];
+  page.on('request', (request) => { if (request.url().includes('/builds/chinese/pages/')) requested.push(request.url()); });
+
+  await page.request.post('http://127.0.0.1:18080/fixture/translation/page');
+  // The bundle is polled every 5 seconds; the finished page appears without a reload.
+  await expect(status).toContainText('已完成 2 / 3 页', { timeout: 15000 });
+  await expect(page.getByAltText('第 2 页预览')).toBeVisible();
+  await expect(page.getByText('正在翻译第 3 页…')).toBeAttached();
+  expect(requested.every((url) => url.includes('/pages/1/'))).toBe(true);
+
+  await page.request.post('http://127.0.0.1:18080/fixture/translation/finish');
+  await expect(page.locator('.page-preview.is-translating')).toHaveCount(0, { timeout: 15000 });
+  await rendered(page);
+  await expect(page.getByRole('button', { name: '中文译文', exact: true })).toBeVisible();
+});

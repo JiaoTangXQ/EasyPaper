@@ -6,12 +6,14 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session
 
 from ..models.reading import ReadingState
@@ -22,6 +24,9 @@ from ..services.document_parser import render_source
 from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
+MAX_CHAT_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_CHAT_IMAGE_PIXELS = 25_000_000
+CHAT_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"}
 
 
 class StatePatch(BaseModel):
@@ -47,6 +52,40 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     selection: str = Field(default="", max_length=8000)
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
+
+
+def _parse_image_chat_request(question: str, selection: str, history: str) -> AskRequest:
+    try:
+        decoded_history = json.loads(history)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(422, "对话历史格式无效。") from exc
+    try:
+        return AskRequest(question=question, selection=selection, history=decoded_history)
+    except ValidationError as exc:
+        raise HTTPException(422, "问题或对话历史格式无效。") from exc
+
+
+async def _read_chat_image(image: UploadFile) -> bytes:
+    if image.content_type not in CHAT_IMAGE_TYPES:
+        raise HTTPException(415, "只支持 PNG、JPEG、WebP、GIF 或 BMP 图片。")
+    raw = await image.read(MAX_CHAT_IMAGE_BYTES + 1)
+    if len(raw) > MAX_CHAT_IMAGE_BYTES:
+        raise HTTPException(413, "图片大小不能超过 4 MB。")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            if source.width * source.height > MAX_CHAT_IMAGE_PIXELS:
+                raise HTTPException(413, "图片分辨率过大，请先缩小图片。")
+            source.verify()
+        with Image.open(BytesIO(raw)) as source:
+            normalized = BytesIO()
+            source.convert("RGB").save(normalized, format="PNG", optimize=True)
+            if normalized.tell() > MAX_CHAT_IMAGE_BYTES:
+                raise HTTPException(413, "图片处理后超过 4 MB，请先缩小图片。")
+            return normalized.getvalue()
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise HTTPException(422, "图片无法读取，请重新复制或选择图片。") from exc
 
 
 def create_reading_router(service) -> APIRouter:
@@ -117,6 +156,17 @@ def create_reading_router(service) -> APIRouter:
         document, block = await block_for(task, block_id)
         return await model_result(service.aid(task, block, document))
 
+    @router.post("/{task_id}/pages/{page}/aid")
+    async def page_aid(task_id: str, page: int, user: User = Depends(get_current_user)):
+        """Generate only the current page's blocks; each result remains independently cached."""
+        task = owned(task_id, user)
+        document = await document_for(task)
+        blocks = [block for block in document["blocks"] if block.get("page") == page]
+        if not blocks:
+            raise HTTPException(404, "页面不存在，请重新载入论文。")
+        results = await model_result(asyncio.gather(*(service.aid(task, block, document) for block in blocks)))
+        return {"page": page, "aids": {block["id"]: result for block, result in zip(blocks, results, strict=False)}}
+
     @router.post("/{task_id}/blocks/{block_id}/explain")
     async def explain(task_id: str, block_id: str, body: ExplainRequest, user: User = Depends(get_current_user)):
         task = owned(task_id, user)
@@ -133,6 +183,29 @@ def create_reading_router(service) -> APIRouter:
                 body.question,
                 body.selection,
                 history=[message.model_dump() for message in body.history],
+            )
+        )
+
+    @router.post("/{task_id}/ask-image")
+    async def ask_image(
+        task_id: str,
+        question: str = Form(...),
+        selection: str = Form(""),
+        history: str = Form("[]"),
+        image: UploadFile = File(...),
+        user: User = Depends(get_current_user),
+    ):
+        task = owned(task_id, user)
+        body = _parse_image_chat_request(question, selection, history)
+        image_bytes = await _read_chat_image(image)
+        return await model_result(
+            service.ask(
+                task,
+                await document_for(task),
+                body.question,
+                body.selection,
+                history=[message.model_dump() for message in body.history],
+                image_bytes=image_bytes,
             )
         )
 

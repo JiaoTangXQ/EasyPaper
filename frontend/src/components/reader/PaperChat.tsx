@@ -1,10 +1,13 @@
 import { BrandMark } from "@/components/Brand";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowUp, Loader2, RotateCcw, X } from "lucide-react";
+import { ArrowUp, ImagePlus, Loader2, RotateCcw, X } from "lucide-react";
 import api from "@/lib/api";
 import { getApiErrorMessage } from "@/lib/errors";
+import { toast } from "sonner";
 import "./paper-chat.css";
+
+const MAX_PASTED_IMAGE_BYTES = 4 * 1024 * 1024;
 
 type Answer = {
   answer: string;
@@ -19,7 +22,10 @@ type Turn = {
   status: "pending" | "complete" | "error";
   answer?: Answer;
   error?: string;
+  imageFile?: File;
+  imageUrl?: string;
 };
+type PastedImage = { file: File; url: string };
 type Props = {
   taskId: string;
   title: string;
@@ -42,6 +48,7 @@ export default function PaperChat({
   portalContainer,
 }: Props) {
   const [draft, setDraft] = useState("");
+  const [pastedImage, setPastedImage] = useState<PastedImage | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [viewport, setViewport] = useState({ height: window.innerHeight, bottom: 0, mobile: window.innerWidth <= 700 });
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -52,8 +59,21 @@ export default function PaperChat({
   const asking = turns.some((turn) => turn.status === "pending");
   const compactPosition = viewport.mobile || viewport.height < 440;
   const shortViewport = viewport.height < 300;
+  const turnsRef = useRef<Turn[]>([]);
+  const pastedImageRef = useRef<PastedImage | null>(null);
+  turnsRef.current = turns;
+  pastedImageRef.current = pastedImage;
 
-  useEffect(() => () => request.current?.abort(), []);
+  useEffect(
+    () => () => {
+      request.current?.abort();
+      turnsRef.current.forEach((turn) => {
+        if (turn.imageUrl) URL.revokeObjectURL(turn.imageUrl);
+      });
+      if (pastedImageRef.current) URL.revokeObjectURL(pastedImageRef.current.url);
+    },
+    [],
+  );
   useEffect(() => {
     if (!open) return;
     const visible = window.visualViewport;
@@ -102,15 +122,31 @@ export default function PaperChat({
         },
       ]);
     try {
-      const { data } = await api.post<Answer>(
-        `/api/reading/${taskId}/ask`,
-        {
-          question: turn.question,
-          selection: turn.selection,
-          history,
-        },
-        { signal: controller.signal },
-      );
+      let data: Answer;
+      if (turn.imageFile) {
+        const form = new FormData();
+        form.append("question", turn.question);
+        form.append("selection", turn.selection);
+        form.append("history", JSON.stringify(history));
+        form.append("image", turn.imageFile, turn.imageFile.name || "clipboard.png");
+        data = (
+          await api.post<Answer>(`/api/reading/${taskId}/ask-image`, form, {
+            signal: controller.signal,
+          })
+        ).data;
+      } else {
+        data = (
+          await api.post<Answer>(
+            `/api/reading/${taskId}/ask`,
+            {
+              question: turn.question,
+              selection: turn.selection,
+              history,
+            },
+            { signal: controller.signal },
+          )
+        ).data;
+      }
       if (!data.answer?.trim()) throw new Error("回答为空，请重试。");
       if (!controller.signal.aborted)
         setTurns((current) =>
@@ -133,18 +169,49 @@ export default function PaperChat({
       if (request.current === controller) request.current = null;
     }
   };
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const item = Array.from(event.clipboardData.items).find(
+      (clipboardItem) => clipboardItem.kind === "file" && clipboardItem.type.startsWith("image/"),
+    );
+    const file = item?.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    if (file.size > MAX_PASTED_IMAGE_BYTES) {
+      toast.error("图片大小不能超过 4 MB。");
+      return;
+    }
+    if (pastedImageRef.current) URL.revokeObjectURL(pastedImageRef.current.url);
+    setPastedImage({ file, url: URL.createObjectURL(file) });
+  };
+  const removePastedImage = () => {
+    if (pastedImageRef.current) URL.revokeObjectURL(pastedImageRef.current.url);
+    pastedImageRef.current = null;
+    setPastedImage(null);
+  };
+  const clearConversation = () => {
+    turnsRef.current.forEach((turn) => {
+      if (turn.imageUrl) URL.revokeObjectURL(turn.imageUrl);
+    });
+    turnsRef.current = [];
+    setTurns([]);
+  };
   const send = () => {
-    const question = draft.trim();
+    const image = pastedImage;
+    const question = draft.trim() || (image ? "请分析这张图片，并说明它与论文内容的关系。" : "");
     if (!question || request.current) return;
     const turn: Turn = {
       id: crypto.randomUUID(),
       question,
       selection: selection.trim().slice(0, 8000),
       status: "pending",
+      imageFile: image?.file,
+      imageUrl: image?.url,
     };
     followLatest.current = true;
     setTurns((current) => [...current, turn]);
     setDraft("");
+    pastedImageRef.current = null;
+    setPastedImage(null);
     clearSelection();
     void answerTurn(turn, turns);
     composer.current?.focus();
@@ -196,8 +263,9 @@ export default function PaperChat({
               title="开始新对话"
               disabled={asking || turns.length === 0}
               onClick={() => {
-                setTurns([]);
+                clearConversation();
                 setDraft("");
+                removePastedImage();
                 clearSelection();
                 followLatest.current = true;
                 composer.current?.focus();
@@ -244,6 +312,7 @@ export default function PaperChat({
                 <div className="paper-chat-turn" key={turn.id}>
                   <div className="paper-chat-question">
                     <span className="sr-only">你：</span>
+                    {turn.imageUrl && <img className="paper-chat-image" src={turn.imageUrl} alt="已粘贴的图片" />}
                     {turn.selection && <blockquote>{turn.selection}</blockquote>}
                     <p>{turn.question}</p>
                   </div>
@@ -305,6 +374,16 @@ export default function PaperChat({
                 </button>
               </div>
             )}
+            {pastedImage && (
+              <div className="paper-chat-image-preview">
+                <ImagePlus size={15} />
+                <img src={pastedImage.url} alt="待发送的图片" />
+                <span>已附加图片</span>
+                <button type="button" className="paper-chat-icon" aria-label="移除图片" onClick={removePastedImage}>
+                  <X size={15} />
+                </button>
+              </div>
+            )}
             <div className="paper-chat-input">
               <label className="sr-only" htmlFor="paper-chat-question">
                 问题
@@ -317,6 +396,7 @@ export default function PaperChat({
                 rows={shortViewport ? 1 : 2}
                 placeholder="问问这篇论文…"
                 onChange={(event) => setDraft(event.target.value)}
+                onPaste={handlePaste}
                 onKeyDown={(event) => {
                   if (
                     event.key === "Enter" &&
@@ -333,12 +413,12 @@ export default function PaperChat({
                 type="submit"
                 className="paper-chat-send"
                 aria-label="发送问题"
-                disabled={asking || !draft.trim()}
+                disabled={asking || (!draft.trim() && !pastedImage)}
               >
                 <ArrowUp size={21} />
               </button>
             </div>
-            <span className="paper-chat-hint">结合当前论文回答 · Shift + Enter 换行</span>
+            <span className="paper-chat-hint">结合当前论文回答 · 可直接粘贴图片 · Shift + Enter 换行</span>
           </form>
         </Dialog.Content>
       </Dialog.Portal>

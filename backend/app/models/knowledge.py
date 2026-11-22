@@ -7,11 +7,25 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
+class PaperPassport(SQLModel, table=True):
+    """Stable user-owned identity for the same source PDF across import tasks."""
+
+    id: str = Field(primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    fingerprint: str = Field(index=True)
+    title: str = Field(default="")
+    doi: str | None = Field(default=None, index=True)
+    arxiv_id: str | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PaperKnowledge(SQLModel, table=True):
     """论文知识根表，knowledge_json 存储完整可迁移 JSON 文档。"""
 
     id: str = Field(primary_key=True)
     task_id: str | None = Field(default=None, index=True)
+    passport_id: str | None = Field(default=None, foreign_key="paperpassport.id", index=True)
     user_id: int = Field(foreign_key="user.id", index=True)
 
     # 元数据（索引用）
@@ -45,6 +59,7 @@ class KnowledgeEntity(SQLModel, table=True):
     aliases_json: str | None = Field(default=None)
     definition: str | None = Field(default=None)
     importance: float = Field(default=0.5)
+    evidence_json: str = Field(default="[]")
 
 
 class KnowledgeRelationship(SQLModel, table=True):
@@ -59,6 +74,31 @@ class KnowledgeRelationship(SQLModel, table=True):
     type: str  # extends|uses|evaluates_on|outperforms|similar_to|contradicts|part_of|requires
     description: str | None = Field(default=None)
     confidence: float = Field(default=0.5)
+    evidence_json: str = Field(default="[]")
+
+
+class PersonalTerm(SQLModel, table=True):
+    """A user's durable vocabulary memory, separate from generated flashcards."""
+
+    id: str = Field(primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    term: str
+    normalized_term: str = Field(index=True)
+    meaning: str = Field(default="")
+    definition: str = Field(default="")
+    paper_id: str | None = Field(default=None, foreign_key="paperknowledge.id", index=True)
+    task_id: str | None = Field(default=None, index=True)
+    block_id: str | None = Field(default=None, index=True)
+    source_quote: str = Field(default="")
+    notes: str = Field(default="")
+    interval_days: float = Field(default=0.0)
+    ease_factor: float = Field(default=2.5)
+    repetitions: int = Field(default=0)
+    next_review: datetime = Field(default_factory=datetime.utcnow)
+    last_review: datetime | None = Field(default=None)
+    times_seen: int = Field(default=1)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Flashcard(SQLModel, table=True):

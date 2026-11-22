@@ -40,6 +40,10 @@ class DocumentProcessingError(RuntimeError):
     """可直接展示给任务状态的处理错误。"""
 
 
+class TranslationAborted(DocumentProcessingError):
+    """模型服务不可用（额度、密钥等），消息可直接展示给用户。"""
+
+
 class DocumentProcessor:
     def __init__(self, config: AppConfig, task_manager: TaskManager, ai_client: AIClient | None = None) -> None:
         self.pdf_slots = asyncio.Semaphore(config.processing.max_concurrent)
@@ -145,8 +149,12 @@ class DocumentProcessor:
         mode: str = "translate",
         ai_loop=None,
         translation_records=None,
+        page_publisher=None,
     ) -> tuple[bytes, str, bytes | None]:
-        """调用 pdf2zh 进行翻译或简化"""
+        """调用 pdf2zh 进行翻译或简化
+
+        page_publisher 会在每页完成时收到该页（见 reader_partial），用于边翻边读。
+        """
 
         try:
             from pdf2zh import translate
@@ -216,7 +224,9 @@ class DocumentProcessor:
 
             try:
                 # 调用 pdf2zh
-                with pdf2zh_backend(self.config.llm, self.ai, ai_loop, records=translation_records) as backend:
+                with pdf2zh_backend(
+                    self.config.llm, self.ai, ai_loop, records=translation_records, pages=page_publisher
+                ) as backend:
                     results = translate(
                         files=[str(input_path)],
                         lang_in="en",
@@ -261,7 +271,7 @@ class DocumentProcessor:
                 raise DocumentProcessingError("pdf2zh 输出文件不存在")
 
             except PDFTranslationAbort as exc:
-                raise DocumentProcessingError(str(exc)) from None
+                raise TranslationAborted(str(exc)) from None
             except Exception as e:
                 logger.exception(f"pdf2zh 处理失败: {e}")
                 if isinstance(e, DocumentProcessingError):

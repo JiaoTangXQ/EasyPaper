@@ -38,7 +38,9 @@ class GlossWorkerRunner:
         self._headers = {"Authorization": f"Bearer {self.token}"}
 
     async def run_forever(self) -> None:
-        logger.info("Gloss worker started base_url=%s label=%s concurrency=%s", self.base_url, self.worker_label, _concurrency())
+        logger.info(
+            "Gloss worker started base_url=%s label=%s concurrency=%s", self.base_url, self.worker_label, _concurrency()
+        )
         async with httpx.AsyncClient(base_url=self.base_url, timeout=httpx.Timeout(600.0, connect=30.0)) as client:
             while True:
                 try:
@@ -109,6 +111,12 @@ class GlossWorkerRunner:
 
             async def on_batch(produced):
                 collected.extend(produced)
+                checkpoint = await client.post(
+                    f"/api/gloss-worker/jobs/{claim_token}/checkpoint",
+                    headers=self._headers,
+                    json={"spans": produced},
+                )
+                checkpoint.raise_for_status()
 
             spans = await prepare_gloss(
                 self.ai,

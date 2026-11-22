@@ -33,6 +33,11 @@ python3 scripts/prepare_server.py --domain papers.example.com
 发到聊天中或提交到 Git。API Key 建议单独创建，并在供应商侧设置消费上限。
 数据库密码使用生成的十六进制值，避免 URL 特殊字符需要转义的问题。
 
+当前 EasyPaper 线上使用腾讯 TokenHub 的 OpenAI 兼容接口：
+`https://tokenhub.tencentmaas.com/v1`，模型为
+`deepseek-v4.1-flash-1017`。本机其他项目中的 `.env` 可以作为配置来源，
+但只复制 endpoint 和 model；API Key 只写入服务器私有 `.env`，不要复制到仓库。
+
 服务器设置位于 `deploy/config.production.yaml`，与本地开发配置独立。
 生产镜像默认使用 HTTP API 模式；不自带 Codex 登录态。下节提供服务器已有
 Codex 登录时的接入方式。
@@ -61,7 +66,7 @@ Codex 使用独立临时工作目录、无持久会话、只读沙箱，关闭 s
 
 ```dotenv
 CODEX_RUNTIME_DIR=/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl
-CODEX_MODEL=gpt-5.5
+CODEX_MODEL=gpt-5.6-sol
 COMPOSE_FILE=docker-compose.prod.yml:deploy/compose.codex.yml
 ```
 

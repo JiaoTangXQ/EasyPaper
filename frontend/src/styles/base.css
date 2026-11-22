@@ -1,0 +1,248 @@
+/* Base document styles, typography and shared motion primitives. */
+@font-face {
+  font-family: "EasyPaper Headline";
+  src: url("../assets/fonts/easypaper-headline.woff") format("woff");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: -0.003em;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  text-underline-offset: 3px;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+h1,
+h2 {
+  text-wrap: balance;
+}
+
+time,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: #f3d7d3;
+  color: #4a1712;
+}
+
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+:is(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:where(*) {
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+  scrollbar-width: thin;
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--fill);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+}
+
+/* Page transitions: every routed page fades up once on mount. */
+@keyframes ep-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ep-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ep-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ep-slide-in-right {
+  from {
+    opacity: 0.4;
+    transform: translate3d(24px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ep-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@keyframes ep-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ep-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.spin,
+.animate-spin {
+  animation: ep-spin 0.9s linear infinite;
+}
+
+.ep-enter {
+  animation: ep-rise var(--dur-slow) var(--ep-delay, 0ms) var(--ease-out) backwards;
+}
+
+/* Lists reveal their first rows in sequence; later rows appear together. */
+.ep-stagger > * {
+  animation: ep-rise var(--dur-slow) var(--ease-out) backwards;
+}
+.ep-stagger > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.ep-stagger > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.ep-stagger > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+.ep-stagger > *:nth-child(5) {
+  animation-delay: 160ms;
+}
+.ep-stagger > *:nth-child(n + 6) {
+  animation-delay: 200ms;
+}
+
+.skeleton {
+  display: block;
+  border-radius: var(--radius-xs);
+  background: linear-gradient(90deg, #ececef 0%, #f6f6f8 45%, #ececef 90%);
+  background-size: 220% 100%;
+  animation: ep-shimmer 1.4s var(--ease-in-out) infinite;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* Spinners carry state, so they keep turning slowly instead of stopping. */
+  .spin,
+  .animate-spin {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

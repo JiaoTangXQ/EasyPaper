@@ -4,6 +4,10 @@ backend/config/*.yaml
 .env
 .env.*
 !.env.example
+# Private worker settings and tokens (e.g. a copied gloss-worker.env); only examples are public.
+*.env
+!*.env.example
+*.token
 .codex/
 **/.codex/
 .codez/

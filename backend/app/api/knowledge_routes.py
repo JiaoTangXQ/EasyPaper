@@ -25,6 +25,7 @@ from ..models.knowledge import (
     KnowledgeRelationship,
     ObsidianSyncMapping,
     PaperKnowledge,
+    PersonalTerm,
     UserAnnotation,
 )
 from ..models.task import Task, TaskStatus
@@ -73,6 +74,16 @@ def _normalize_tags(tags: str | list[str]) -> list[str]:
     return [tag.strip() for tag in raw_tags if tag.strip()]
 
 
+def _json_list(value: str | None) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [{"block_id": item} if isinstance(item, str) else item for item in parsed]
+
+
 def _ensure_extracting_paper(
     session: Session,
     task: Task,
@@ -83,7 +94,16 @@ def _ensure_extracting_paper(
     is True only if this call transitioned it into "extracting". An extraction
     already in progress returns started=False so the caller doesn't launch a
     duplicate run (which would create duplicate entities/flashcards)."""
-    existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task.task_id)).first()
+    existing = None
+    if getattr(task, "passport_id", None):
+        existing = session.exec(
+            select(PaperKnowledge).where(
+                PaperKnowledge.passport_id == task.passport_id,
+                PaperKnowledge.user_id == user_id,
+            )
+        ).first()
+    if not existing:
+        existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task.task_id)).first()
     if existing:
         if existing.extraction_status == "extracting":
             return existing, False
@@ -101,8 +121,9 @@ def _ensure_extracting_paper(
 
     title = (task.filename or "").strip() if hasattr(task, "filename") else ""
     paper = PaperKnowledge(
-        id=f"pk_{uuid.uuid4().hex[:12]}",
+        id=f"pk_{task.passport_id}" if getattr(task, "passport_id", None) else f"pk_{uuid.uuid4().hex[:12]}",
         task_id=task.task_id,
+        passport_id=getattr(task, "passport_id", None),
         user_id=user_id,
         title=title,
         extraction_status="extracting",
@@ -210,7 +231,18 @@ def create_knowledge_router(
 
         # 检查是否已提取
         with Session(engine) as session:
-            existing = session.exec(select(PaperKnowledge).where(PaperKnowledge.task_id == task_id)).first()
+            existing = session.exec(
+                select(PaperKnowledge).where(PaperKnowledge.task_id == task_id, PaperKnowledge.user_id == user.id)
+            ).first()
+            if not existing:
+                task = session.get(Task, task_id)
+                if task and task.passport_id:
+                    existing = session.exec(
+                        select(PaperKnowledge).where(
+                            PaperKnowledge.passport_id == task.passport_id,
+                            PaperKnowledge.user_id == user.id,
+                        )
+                    ).first()
         if existing and existing.extraction_status == "completed":
             return {"paper_id": existing.id, "status": "already_completed"}
 
@@ -291,6 +323,7 @@ def create_knowledge_router(
             {
                 "id": p.id,
                 "task_id": p.task_id,
+                "passport_id": p.passport_id,
                 "title": p.title,
                 "doi": p.doi,
                 "year": p.year,
@@ -327,8 +360,15 @@ def create_knowledge_router(
                 data["flashcards"] = [_flashcard_to_dict(card) for card in cards]
                 data["annotations"] = [_annotation_to_dict(annotation) for annotation in annotations]
                 data["task_id"] = paper.task_id
+                data["passport_id"] = paper.passport_id
                 return data
-            return {"id": paper.id, "title": paper.title, "extraction_status": paper.extraction_status}
+            return {
+                "id": paper.id,
+                "title": paper.title,
+                "task_id": paper.task_id,
+                "passport_id": paper.passport_id,
+                "extraction_status": paper.extraction_status,
+            }
 
     @router.post("/papers/{paper_id}/sync/obsidian")
     async def sync_paper_to_obsidian(
@@ -371,6 +411,12 @@ def create_knowledge_router(
                 items = session.exec(select(model).where(model.paper_id == paper_id)).all()
                 for item in items:
                     session.delete(item)
+            # Saved terms belong to the user, not to the generated notes. Keep them and
+            # drop only the link; PostgreSQL would otherwise reject the delete (foreign key).
+            for term in session.exec(select(PersonalTerm).where(PersonalTerm.paper_id == paper_id)).all():
+                term.paper_id = None
+                session.add(term)
+            session.flush()
 
             session.delete(paper)
             session.commit()
@@ -390,6 +436,9 @@ def create_knowledge_router(
             relationships = session.exec(
                 select(KnowledgeRelationship).where(KnowledgeRelationship.user_id == user.id)
             ).all()
+            papers = {
+                p.id: p for p in session.exec(select(PaperKnowledge).where(PaperKnowledge.user_id == user.id)).all()
+            }
 
         nodes = [
             {
@@ -399,6 +448,9 @@ def create_knowledge_router(
                 "definition": e.definition,
                 "importance": e.importance,
                 "paper_id": e.paper_id,
+                "paper_title": papers.get(e.paper_id).title if papers.get(e.paper_id) else "",
+                "task_id": papers.get(e.paper_id).task_id if papers.get(e.paper_id) else None,
+                "evidence_refs": _json_list(e.evidence_json),
             }
             for e in entities
         ]
@@ -410,6 +462,8 @@ def create_knowledge_router(
                 "type": r.type,
                 "description": r.description,
                 "confidence": r.confidence,
+                "paper_id": r.paper_id,
+                "evidence_refs": _json_list(r.evidence_json),
             }
             for r in relationships
         ]

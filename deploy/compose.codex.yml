@@ -10,6 +10,14 @@ services:
       EASYPAPER_CODEX_MAX_CONCURRENT: "1"
       EASYPAPER_CODEX_TIMEOUT_SECONDS: "180"
       EASYPAPER_DOWNLOAD_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      # Codex talks to the same external endpoints as the downloader. Keep the
+      # proxy opt-in and scoped to the backend container; without these three
+      # variables the CLI bypasses the server's private sing-box listener.
+      HTTP_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      HTTPS_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      ALL_PROXY: ${EASYPAPER_DOWNLOAD_PROXY:-}
+      NO_PROXY: ${EASYPAPER_NO_PROXY:-localhost,127.0.0.1,db}
+      no_proxy: ${EASYPAPER_NO_PROXY:-localhost,127.0.0.1,db}
       CODEX_HOME: /home/app/.codex
     volumes:
       - type: bind

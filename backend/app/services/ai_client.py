@@ -197,9 +197,13 @@ class AIClient:
             except TimeoutError:
                 raise AIError("Cursor 执行超时，请稍后重试。", retryable=True) from None
         async with self._api_slots:
-            return await self._api(system, user, image_bytes, max_tokens, json_mode)
+            try:
+                async with asyncio.timeout(timeout_seconds or 180):
+                    return await self._api(system, user, image_bytes, max_tokens, json_mode, model, timeout_seconds)
+            except TimeoutError:
+                raise AIError("AI 接口请求超时，请稍后重试。", retryable=True) from None
 
-    async def _api(self, system, user, image_bytes, max_tokens, json_mode) -> str:
+    async def _api(self, system, user, image_bytes, max_tokens, json_mode, model=None, timeout_seconds=None) -> str:
         if not self.config.api_key or self.config.api_key == "YOUR_API_KEY":
             raise AIError("尚未配置 AI API Key，也可以设置 llm.provider 为 codex 或 cursor。")
         content: object = user
@@ -212,15 +216,20 @@ class AIClient:
                 },
             ]
         payload = {
-            "model": self.config.model,
+            "model": model or self.config.model,
             "temperature": 0.1,
             "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
+            # Tencent TokenHub's DeepSeek models enable reasoning by default.
+            # Structured extraction needs the final content within the output
+            # budget; reasoning is not useful to the caller and can consume it.
+            "thinking": {"type": "disabled"},
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(
-            base_url=self.config.base_url.rstrip("/") + "/", timeout=httpx.Timeout(180, connect=10)
+            base_url=self.config.base_url.rstrip("/") + "/",
+            timeout=httpx.Timeout(timeout_seconds or 180, connect=10),
         ) as client:
             try:
                 response = await client.post(
@@ -299,7 +308,9 @@ class AIClient:
                     limit=4 * 1024 * 1024,
                 )
             except FileNotFoundError:
-                raise AIError("找不到 cursor-p，请安装 Cursor 命令行或配置 llm.cursor.executable 的绝对路径。") from None
+                raise AIError(
+                    "找不到 cursor-p，请安装 Cursor 命令行或配置 llm.cursor.executable 的绝对路径。"
+                ) from None
             except OSError:
                 raise AIError("无法启动 cursor-p，请检查 llm.cursor.executable 及执行权限。") from None
 

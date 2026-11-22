@@ -51,6 +51,10 @@ class GlossWorkerService:
             build.error = ""
             build.updated_at = now
             session.add(build)
+            if not session.get(ReaderGloss, document_id):
+                # Make the empty checkpoint visible immediately. The reader
+                # can open the original PDF while the worker prepares page 1.
+                session.add(ReaderGloss(document_id=document_id, spans_json="[]"))
             job = session.get(GlossWorkerJob, jid)
             if not job:
                 job = GlossWorkerJob(
@@ -71,6 +75,42 @@ class GlossWorkerService:
             session.commit()
             session.refresh(job)
             return job
+
+    def checkpoint(self, claim_token: str, spans: list) -> None:
+        """Publish a worker batch without completing the whole document."""
+        if not isinstance(spans, list):
+            raise HTTPException(422, "spans 必须是数组")
+        incoming = [span for span in spans if isinstance(span, dict)]
+        with Session(self.engine) as session:
+            job = self._job_by_token(session, claim_token)
+            row = session.get(ReaderGloss, job.document_id)
+            existing: list = []
+            if row and row.spans_json:
+                try:
+                    parsed = json.loads(row.spans_json)
+                    existing = parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError:
+                    existing = []
+            by_id = {
+                str(span.get("id") or span.get("unit_id")): span
+                for span in existing
+                if isinstance(span, dict) and (span.get("id") or span.get("unit_id"))
+            }
+            for span in incoming:
+                key = span.get("id") or span.get("unit_id")
+                if key:
+                    by_id[str(key)] = span
+            merged = list(by_id.values())
+            encoded = json.dumps(merged, ensure_ascii=False, separators=(",", ":"))
+            if len(encoded.encode()) > MAX_SPANS_BYTES:
+                raise HTTPException(413, "点读数据过大")
+            if row:
+                row.spans_json = encoded
+                row.updated_at = datetime.utcnow()
+            else:
+                row = ReaderGloss(document_id=job.document_id, spans_json=encoded)
+            session.add(row)
+            session.commit()
 
     def release_expired_claims(self) -> int:
         now = datetime.utcnow()
@@ -106,11 +146,7 @@ class GlossWorkerService:
         token = secrets.token_urlsafe(32)
         until = datetime.utcnow() + timedelta(seconds=lease)
         with Session(self.engine) as session:
-            query = (
-                select(GlossWorkerJob)
-                .where(GlossWorkerJob.status == "queued")
-                .order_by(GlossWorkerJob.created_at)
-            )
+            query = select(GlossWorkerJob).where(GlossWorkerJob.status == "queued").order_by(GlossWorkerJob.created_at)
             if self.engine.dialect.name == "postgresql":
                 job = session.exec(query.with_for_update(skip_locked=True)).first()
             else:

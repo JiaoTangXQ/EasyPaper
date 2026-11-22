@@ -22,10 +22,38 @@ from .simplification_guard import simplify_preserving_fragments
 _INSTALL_LOCK = threading.Lock()
 _CONTEXT_KEY = "__easypaper_codex_executor__"
 _RECORDS_KEY = "__easypaper_translation_records__"
+_PAGES_KEY = "__easypaper_page_publisher__"
+_REQUEST_KEYS = frozenset({_CONTEXT_KEY, _RECORDS_KEY, _PAGES_KEY, FLOW_KEY})
+# pdf2zh processes the pages of one document sequentially in one thread.
+_active_pages = threading.local()
 
 
 class PDFTranslationAbort(BaseException):
     """Bypass pdf2zh's unbounded retry(Exception); converted at our public boundary."""
+
+
+# Responses that retrying cannot fix. pdf2zh retries every failed paragraph once
+# a second forever, so an exhausted quota would otherwise hang the job.
+_FATAL_STATUS = {
+    401: "模型服务拒绝了 API 密钥（HTTP 401），请检查 LLM 设置后重试。",
+    402: "模型服务额度已用完（HTTP 402），充值或开通后付费后再重试。",
+    403: "模型服务拒绝访问（HTTP 403），请检查账号权限后重试。",
+    404: "模型服务找不到配置的模型（HTTP 404），请检查模型名称后重试。",
+}
+
+
+def _abort_on_fatal_response(do_translate):
+    @wraps(do_translate)
+    def guarded(*args, **kwargs):
+        try:
+            return do_translate(*args, **kwargs)
+        except Exception as exc:
+            message = _FATAL_STATUS.get(getattr(exc, "status_code", None))
+            if message:
+                raise PDFTranslationAbort(message) from None
+            raise
+
+    return guarded
 
 
 class CodexTranslationExecutor:
@@ -103,12 +131,12 @@ def install_pdf2zh_adapter():
                 else:
                     # pdf2zh persists provider envs to disk; request state must
                     # never be passed into that configuration store.
-                    provider_envs = {
-                        k: v for k, v in (envs or {}).items() if k not in {_CONTEXT_KEY, _RECORDS_KEY, FLOW_KEY}
-                    }
+                    provider_envs = {k: v for k, v in (envs or {}).items() if k not in _REQUEST_KEYS}
                     instance = original(
                         lang_in, lang_out, model, envs=provider_envs, prompt=prompt, ignore_cache=ignore_cache
                     )
+                    if hasattr(instance, "do_translate"):
+                        instance.do_translate = _abort_on_fatal_response(instance.do_translate)
                 records = (envs or {}).get(_RECORDS_KEY)
                 simplifying = lang_in == lang_out and prompt is not None
                 instance._easypaper_raw_translate = instance.translate
@@ -138,6 +166,7 @@ def install_pdf2zh_adapter():
         if getattr(converter, "__name__", "") == "pdf2zh.converter":
             receive_layout = word_wrapping_layout(receive_layout)
             _install_document_flow()
+            _install_page_publication()
 
         def recorded_layout(self, page):
             self.translator._easypaper_page = page.pageid
@@ -191,9 +220,68 @@ def _install_document_flow():
     high_level.translate_patch = document_patch
 
 
+def _install_page_publication():
+    """Hand each finished page's content patch to the request's page publisher.
+
+    pdf2zh's page loop (translate_patch) collects every page patch and applies
+    them after the last page. The publisher renders a page as soon as its patch
+    exists, so translated pages can be read while later pages are translated.
+    """
+    from pdf2zh import high_level
+    from pdf2zh.pdfinterp import PDFPageInterpreterEx
+
+    original = high_level.translate_patch
+    if getattr(original, "_easypaper_page_publication", False):
+        return
+    signature = inspect.signature(original)
+
+    @wraps(original)
+    def publishing_patch(*args, **kwargs):
+        options = signature.bind(*args, **kwargs).arguments
+        publisher = (options.get("envs") or {}).get(_PAGES_KEY)
+        source, doc = options.get("inf"), options.get("doc_zh")
+        simplifying = options.get("lang_in") == options.get("lang_out") and options.get("prompt") is not None
+        if publisher is None or simplifying or doc is None or not hasattr(source, "getvalue"):
+            return original(*args, **kwargs)
+        # `inf` is pdf2zh's working copy before any page is patched; pdfminer
+        # object numbers in the patches refer to it.
+        publisher.begin(source.getvalue(), doc.page_count)
+        previous = getattr(_active_pages, "publisher", None)
+        _active_pages.publisher = publisher
+        try:
+            return original(*args, **kwargs)
+        finally:
+            _active_pages.publisher = previous
+            publisher.close()
+
+    publishing_patch._easypaper_page_publication = True
+    high_level.translate_patch = publishing_patch
+
+    process_page = PDFPageInterpreterEx.process_page
+    if getattr(process_page, "_easypaper_page_publication", False):
+        return
+
+    @wraps(process_page)
+    def publishing_process_page(self, page):
+        process_page(self, page)
+        publisher = getattr(_active_pages, "publisher", None)
+        if publisher is not None:
+            publisher.page_done(page.pageno, page.page_xref, [obj.objid for obj in page.contents], self.obj_patch)
+
+    publishing_process_page._easypaper_page_publication = True
+    PDFPageInterpreterEx.process_page = publishing_process_page
+
+
 @contextmanager
-def pdf2zh_backend(config, ai: AIClient | None = None, loop=None, records=None):
-    """Called in a PDF worker thread. Standalone callers get an owned event loop."""
+def pdf2zh_backend(config, ai: AIClient | None = None, loop=None, records=None, pages=None):
+    """Called in a PDF worker thread. Standalone callers get an owned event loop.
+
+    `pages` is an optional PartialPagePublisher that receives each finished page.
+    """
+    request_envs = {
+        **({_RECORDS_KEY: records} if records is not None else {}),
+        **({_PAGES_KEY: pages} if pages is not None else {}),
+    }
     if config.provider == "api":
         install_pdf2zh_adapter()
         yield {
@@ -202,7 +290,7 @@ def pdf2zh_backend(config, ai: AIClient | None = None, loop=None, records=None):
                 "OPENAILIKED_BASE_URL": config.base_url,
                 "OPENAILIKED_API_KEY": config.api_key,
                 "OPENAILIKED_MODEL": config.model,
-                **({_RECORDS_KEY: records} if records is not None else {}),
+                **request_envs,
             },
         }
         return
@@ -218,7 +306,7 @@ def pdf2zh_backend(config, ai: AIClient | None = None, loop=None, records=None):
     try:
         yield {
             "service": "openailiked",
-            "envs": {_CONTEXT_KEY: executor, **({_RECORDS_KEY: records} if records is not None else {})},
+            "envs": {_CONTEXT_KEY: executor, **request_envs},
         }
     finally:
         executor.cancel()

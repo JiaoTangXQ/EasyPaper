@@ -1,0 +1,102 @@
+/*
+ * EasyPaper design tokens.
+ * Quiet neutral surfaces, ink-black actions and one vermilion brand accent.
+ * Every page and component reads from these variables; do not hard-code colours elsewhere.
+ */
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #f5f5f7;
+  --bg-elevated: #fbfbfd;
+  --surface: #ffffff;
+  --surface-sunken: #f2f2f4;
+  --glass: rgba(251, 251, 253, 0.78);
+  --glass-strong: rgba(255, 255, 255, 0.92);
+  --fill: rgba(0, 0, 0, 0.04);
+  --fill-hover: rgba(0, 0, 0, 0.06);
+  --fill-active: rgba(0, 0, 0, 0.09);
+
+  /* Ink */
+  --ink: #1d1d1f;
+  --ink-2: #3a3a3c;
+  --muted: #6e6e73;
+  --faint: #8e8e93;
+  --on-ink: #ffffff;
+
+  /* Lines */
+  --hairline: rgba(0, 0, 0, 0.08);
+  --line: #d9d9de;
+  --line-strong: #c4c4ca;
+
+  /* Brand */
+  --accent: #b0322a;
+  --accent-hover: #962820;
+  --accent-soft: #fbefed;
+  --accent-ring: rgba(176, 50, 42, 0.22);
+
+  /* Semantic */
+  --ok: #1f7a4d;
+  --ok-soft: #eaf6ef;
+  --warn: #9a5b00;
+  --warn-soft: #fff6e5;
+  --danger: #c0352b;
+  --danger-soft: #fdeeed;
+  --info: #2f5fb3;
+  --info-soft: #edf2fc;
+
+  /* Annotation category colours (kept in sync with the PDF highlighter). */
+  --mark-yellow: #f4ce46;
+  --mark-blue: #7fb2f0;
+  --mark-green: #8fd19e;
+  --gloss: rgba(47, 95, 179, 0.22);
+
+  /* Shape */
+  --radius-xs: 6px;
+  --radius-sm: 9px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  /* Depth */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 24px 64px rgba(0, 0, 0, 0.16), 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue",
+    "Microsoft YaHei", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB",
+    "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --font-serif: "New York", "Iowan Old Style", Georgia, "Songti SC", "Noto Serif SC", serif;
+  --font-brand: "EasyPaper Headline", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur: 240ms;
+  --dur-slow: 420ms;
+
+  /* Layout */
+  --nav-height: 56px;
+  --tabbar-height: 64px;
+  --content-max: 1180px;
+  --gutter: clamp(20px, 4vw, 48px);
+
+  /* Tailwind/shadcn bridge (HSL triplets). */
+  --ui-background: 240 11% 96%;
+  --ui-foreground: 240 3% 12%;
+  --ui-primary: 240 3% 12%;
+  --ui-secondary: 240 5% 94%;
+  --ui-muted: 240 5% 95%;
+  --ui-muted-foreground: 240 2% 44%;
+  --ui-border: 240 5% 86%;
+  --ui-ring: 4 61% 43%;
+
+  /* Legacy aliases still read by the PDF viewer adapters. */
+  --paper: var(--bg);
+}

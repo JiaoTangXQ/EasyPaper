@@ -1,4 +1,4 @@
-from app.core.config import AppConfig, KnowledgeWorkerConfig, LLMConfig, ProcessingConfig
+from app.core.config import AppConfig, KnowledgeWorkerConfig, LLMConfig
 from app.services.knowledge_preparation import remote_worker_ready, resolve_knowledge_preparation
 
 

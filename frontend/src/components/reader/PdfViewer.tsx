@@ -18,7 +18,7 @@ import { Task, type PdfPageGeometry, type PdfErrorReason } from "@embedpdf/model
 import { LockModeType } from "@embedpdf/plugin-annotation";
 import { UIPlugin } from "@embedpdf/plugin-ui";
 import { usePdfFullscreenToolbar } from "./usePdfFullscreenToolbar";
-import wasmUrl from "@embedpdf/pdfium/pdfium.wasm?url";
+import { PDFIUM_WASM_URL } from "./pdf-assets";
 import chineseFont from "../../../node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Regular.otf?url";
 import { projectedAnnotations, type SharedAnnotation } from "./reader-store";
 import { readerSelectionGeometry } from "./selection-geometry";
@@ -48,6 +48,7 @@ type Props = {
   onSelection?: (text: string) => void;
   glossSpans?: GlossSpan[];
   onGlossEnrich?: (span: GlossSpan) => Promise<GlossSpan | null>;
+  onRememberTerm?: (span: GlossSpan) => Promise<void>;
   autoSpeak?: boolean;
 };
 const geometryKeys = ["rect", "segmentRects", "inkList", "vertices", "linePoints", "rotation", "pageIndex"];
@@ -66,6 +67,11 @@ const appearanceKeys = [
   "textAlign",
   "verticalAlign",
 ];
+/** Largest zoom that keeps a typical paper page comfortable on wide screens, leaving room for the side panel. */
+function comfortableZoom() {
+  if (typeof window === "undefined" || window.innerWidth <= 1000) return null;
+  return Math.round(Math.max(1, Math.min(1.5, (window.innerWidth - 448) / 612)) * 100) / 100;
+}
 const fingerprint = (data: PdfAnnotationObject) =>
   JSON.stringify(appearanceKeys.map((key) => (data as unknown as Record<string, unknown>)[key]));
 
@@ -108,7 +114,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
   const unresolvedText = useRef(false);
   const config = useMemo<PDFViewerConfig>(
     () => ({
-      wasmUrl: new URL(wasmUrl, window.location.href).href,
+      wasmUrl: PDFIUM_WASM_URL,
       tabBar: "never",
       i18n: { defaultLocale: "zh-CN" },
       fonts: { ui: null, signature: null },
@@ -120,26 +126,27 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       theme: {
         preference: "light",
         light: {
-          background: { app: "#f0efec", surface: "#ffffff", surfaceAlt: "#f7f7f5", input: "#ffffff" },
-          foreground: { primary: "#191817", secondary: "#56524d", muted: "#6b6864" },
-          border: { default: "#deddd8", subtle: "#eeede9", strong: "#918b83" },
+          background: { app: "#e9e9ed", surface: "#fbfbfd", surfaceAlt: "#f5f5f7", input: "#ffffff" },
+          foreground: { primary: "#1d1d1f", secondary: "#3a3a3c", muted: "#6e6e73" },
+          border: { default: "#e3e3e8", subtle: "#efeff2", strong: "#a1a1a6" },
           accent: {
-            primary: "#bd392b",
-            primaryHover: "#a42e22",
-            primaryActive: "#892519",
-            primaryLight: "#f9eeeb",
+            primary: "#b0322a",
+            primaryHover: "#962820",
+            primaryActive: "#7d211a",
+            primaryLight: "#fbefed",
             primaryForeground: "#ffffff",
           },
           interactive: {
-            hover: "#f0efec",
-            active: "#e7e4df",
-            selected: "#f9eeeb",
-            focus: "#bd392b",
-            focusRing: "#f2d8d2",
+            hover: "rgba(0,0,0,0.05)",
+            active: "rgba(0,0,0,0.09)",
+            selected: "#fbefed",
+            focus: "#b0322a",
+            focusRing: "rgba(176,50,42,0.22)",
           },
-          scrollbar: { track: "transparent", thumb: "#bbb8b2", thumbHover: "#918b83" },
+          scrollbar: { track: "transparent", thumb: "rgba(0,0,0,0.22)", thumbHover: "rgba(0,0,0,0.36)" },
         },
       },
+      // Fit-width is reduced to a comfortable size after the first layout (see onLayoutReady).
       zoom: { defaultZoomLevel: ZoomMode.FitWidth },
       documentManager: { maxDocuments: 1 },
       selection: { toleranceFactor: 1, minSelectionDragDistance: 2 },
@@ -272,7 +279,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       }
     });
     return reconcilePending.current;
-  }, []);
+  }, [showNotice]);
   useEffect(() => {
     void reconcile();
   }, [props.annotations, props.versionId, props.embeddedAnnotations, reconcile]);
@@ -368,6 +375,16 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       removers.current.push(
         scroll.onLayoutReady((event) => {
           loaded.current = true;
+          if (event.isInitial) {
+            // Fit-width on a large monitor renders a paper page at 230%+, so one page
+            // needs several screens. Cap the opening zoom; the toolbar can still enlarge it.
+            const zoom = registry.getPlugin("zoom")?.provides?.() as
+              | { requestZoom?: (level: number) => void; getState?: () => { currentZoomLevel?: number } }
+              | undefined;
+            const cap = comfortableZoom();
+            const current = zoom?.getState?.()?.currentZoomLevel;
+            if (cap && current && current > cap + 0.01) zoom?.requestZoom?.(cap);
+          }
           reconcile();
           if (event.isInitial && (callbacks.current.initialPage || 1) > 1) {
             scroll.scrollToPage({
@@ -397,7 +414,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
       // Install geometry correction before selection can populate its page cache.
       if (!activeId) documents.openDocumentUrl({ url: callbacks.current.src });
     },
-    [reconcile],
+    [reconcile, showNotice],
   );
   useEffect(
     () => () => {
@@ -506,6 +523,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, Props>((props, ref) => {
           container={container}
           spans={props.glossSpans}
           onEnrich={props.onGlossEnrich}
+          onRememberTerm={props.onRememberTerm}
           autoSpeak={props.autoSpeak}
         />
       ) : null}

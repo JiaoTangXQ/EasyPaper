@@ -3,9 +3,9 @@ llm:
   # EASYPAPER_AI_PROVIDER overrides this value. Restart the backend after switching.
   provider: "api"
   api_key: "YOUR_API_KEY"
-  base_url: "https://openrouter.ai/api/v1"
-  model: "gemini-2.5-flash"
-  judge_model: "gemini-2.5-flash"
+  base_url: "https://tokenhub.tencentmaas.com/v1"
+  model: "deepseek-v4.1-flash-1017"
+  judge_model: "deepseek-v4.1-flash-1017"
   codex:
     executable: "codex" # Or the absolute path returned by `command -v codex`.
     model: "" # Empty uses the installed CLI default, independent of llm.model.

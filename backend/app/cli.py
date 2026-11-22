@@ -59,12 +59,16 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
     worker.add_argument("--token", default=os.getenv("GLOSS_WORKER_TOKEN", ""))
     worker.add_argument("--label", default=os.getenv("EASYPAPER_GLOSS_WORKER_LABEL", "local-worker"))
-    worker.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5")))
+    worker.add_argument(
+        "--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5"))
+    )
     know = sub.add_parser("knowledge-worker", help="Run a trusted local knowledge extraction worker")
     know.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
     know.add_argument("--token", default=os.getenv("KNOWLEDGE_WORKER_TOKEN", ""))
     know.add_argument("--label", default=os.getenv("EASYPAPER_KNOWLEDGE_WORKER_LABEL", "local-knowledge-worker"))
-    know.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_KNOWLEDGE_WORKER_POLL_SECONDS", "5")))
+    know.add_argument(
+        "--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_KNOWLEDGE_WORKER_POLL_SECONDS", "5"))
+    )
     local = sub.add_parser("local-worker", help="Run gloss and knowledge workers together (Mac)")
     local.add_argument("--base-url", default=os.getenv("EASYPAPER_SERVER_URL", "http://127.0.0.1:8000"))
     local.add_argument("--gloss-token", default=os.getenv("GLOSS_WORKER_TOKEN", ""))
@@ -77,7 +81,9 @@ def main(argv: list[str] | None = None) -> int:
         "--knowledge-label",
         default=os.getenv("EASYPAPER_KNOWLEDGE_WORKER_LABEL", "local-knowledge-worker"),
     )
-    local.add_argument("--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5")))
+    local.add_argument(
+        "--poll-seconds", type=float, default=float(os.getenv("EASYPAPER_GLOSS_WORKER_POLL_SECONDS", "5"))
+    )
     local.add_argument(
         "--knowledge",
         dest="knowledge_enabled",

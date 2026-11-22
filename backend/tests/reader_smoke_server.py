@@ -18,8 +18,11 @@ from app.api.deps import get_current_user
 from app.api.reader_routes import create_reader_router
 from app.api.reading_routes import create_reading_router
 from app.core.config import LLMConfig
+from app.models.reading import ReaderBuild
 from app.models.task import Task, TaskStatus
 from app.models.user import User
+from app.services.reader_partial import PartialPages
+from app.services.reader_preview import JPEG_QUALITY, PREVIEW_WIDTHS
 from app.services.reading_service import ReadingService
 
 folder = Path(tempfile.mkdtemp(prefix="easypaper-reader-smoke-"))
@@ -112,6 +115,30 @@ with Session(engine) as session:
         )
     )
     session.commit()
+
+# A paper whose Chinese translation is still running: page 1 is finished, the
+# fixture endpoints below finish one more page or the whole translation.
+translating_source = folder / "translating-source.pdf"
+with fitz.open() as pdf, fitz.open() as translated:
+    for number in (1, 2, 3):
+        pdf.new_page(width=595, height=842).insert_text((54, 90), f"Page {number}: Introduction", fontsize=20)
+        translated.new_page(width=595, height=842).insert_text(
+            (54, 90), f"第 {number} 页：引言（译文）", fontsize=20, fontname="china-s"
+        )
+    translating_source.write_bytes(pdf.tobytes())
+    translating_result = translated.tobytes()
+with Session(engine) as session:
+    session.add(
+        Task(
+            task_id="translating-fixture",
+            filename="Translating fixture.pdf",
+            user_id=1,
+            status=TaskStatus.COMPLETED,
+            original_pdf_path=str(translating_source),
+        )
+    )
+    session.commit()
+translating = {}
 config = SimpleNamespace(
     llm=LLMConfig(api_key="fixture-only"),
     processing=SimpleNamespace(max_concurrent=1),
@@ -160,6 +187,37 @@ async def alignment_gate(paused: bool):
     return {"paused": paused}
 
 
+def publish_translated_page(index):
+    with fitz.open(stream=translating_result, filetype="pdf") as pdf:
+        page = pdf[index]
+        images = {
+            width: page.get_pixmap(matrix=fitz.Matrix(width / page.rect.width, width / page.rect.width)).tobytes(
+                "jpeg", jpg_quality=JPEG_QUALITY
+            )
+            for width in PREVIEW_WIDTHS
+        }
+    translating["partial"].publish(index, images)
+
+
+@app.post("/fixture/translation/page")
+def translate_next_page():
+    done = translating["partial"].state()["done"]
+    publish_translated_page(len(done))
+    return translating["partial"].state()
+
+
+@app.post("/fixture/translation/finish")
+def finish_translation():
+    service, document_id = reading.synced_reader, translating["document_id"]
+    original = next(v for v in service.versions(document_id) if v.kind == "original")
+    service.snapshot(
+        document_id, "chinese", translating_result, Path(original.path).parent, json.loads(original.index_json)
+    )
+    translating["partial"].clear()
+    service._mark_build(document_id, "chinese", "completed", "")
+    return {"status": "completed"}
+
+
 @app.post("/api/auth/login")
 def login(username: str = Form(), password: str = Form()):
     return {"access_token": "reader-smoke-fixture", "token_type": "bearer"}
@@ -194,6 +252,18 @@ async def prepare():
         Path(original.path).parent,
         json.loads(original.index_json),
     )
+    with Session(engine) as session:
+        task = session.get(Task, "translating-fixture")
+    bundle = await reading.synced_reader.open_task(task, 1)
+    document_id = bundle["document_id"]
+    original = next(v for v in reading.synced_reader.versions(document_id) if v.kind == "original")
+    with Session(engine) as session:
+        session.add(ReaderBuild(id=f"{document_id}:chinese", document_id=document_id, kind="chinese"))
+        session.commit()
+    translating["document_id"] = document_id
+    translating["partial"] = PartialPages(Path(original.path).parent, "chinese")
+    translating["partial"].reset(3)
+    publish_translated_page(0)
 
 
 if __name__ == "__main__":

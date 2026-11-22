@@ -4,6 +4,9 @@ EasyPaper keeps runtime credentials outside the repository:
 
 - `backend/config/config.yaml` is the local API/JWT/agent configuration. Commit only [`backend/config/config.example.yaml`](backend/config/config.example.yaml).
 - `.env` and `.env.*` are ignored; commit only `.env.example`.
+- Provider files copied from other local projects (for example another app's `.env`)
+  remain outside this repository; only non-secret endpoint/model values may be
+  reflected in `.env.example` or deployment documentation.
 - SQLite databases, logs, temporary PDFs, certificates, and local Codex state are ignored.
 - The Docker build context excludes the local config, environment files, data, logs, and temporary files.
 

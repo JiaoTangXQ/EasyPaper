@@ -37,9 +37,9 @@ class LLMConfig(BaseModel):
     codex: CodexConfig = Field(default_factory=CodexConfig)
     cursor: CursorConfig = Field(default_factory=CursorConfig)
     api_key: str = Field("", alias="api_key")
-    base_url: str = Field("https://api.zhizengzeng.com/v1", alias="base_url")
-    model: str = Field("gemini-2.5-flash", alias="model")
-    judge_model: str = Field("gemini-2.5-flash", alias="judge_model")
+    base_url: str = Field("https://tokenhub.tencentmaas.com/v1", alias="base_url")
+    model: str = Field("deepseek-v4.1-flash-1017", alias="model")
+    judge_model: str = Field("deepseek-v4.1-flash-1017", alias="judge_model")
 
     @property
     def uses_cli(self) -> bool:
@@ -246,15 +246,19 @@ def get_config() -> AppConfig:
         raw.setdefault("security", {}).update(allow_registration=False, local_sync_enabled=False)
         raw.setdefault("agent", {}).update(enabled=False, api_keys=[])
     config = AppConfig(**raw)
-    if config.processing.gloss_preparation in {"remote_worker", "user_choice"} and not config.gloss_worker.token.strip():
-        if os.getenv("APP_ENV", "").lower() in {"production", "prod"} and config.processing.gloss_preparation == "remote_worker":
+    if (
+        config.processing.gloss_preparation in {"remote_worker", "user_choice"}
+        and not config.gloss_worker.token.strip()
+    ):
+        if (
+            os.getenv("APP_ENV", "").lower() in {"production", "prod"}
+            and config.processing.gloss_preparation == "remote_worker"
+        ):
             raise RuntimeError(
                 "Refusing to start in production: gloss_preparation=remote_worker requires gloss_worker.token "
                 "(set GLOSS_WORKER_TOKEN or gloss_worker.token in config)."
             )
-        logger.warning(
-            "Gloss remote worker is enabled but gloss_worker.token is empty; remote jobs cannot be claimed."
-        )
+        logger.warning("Gloss remote worker is enabled but gloss_worker.token is empty; remote jobs cannot be claimed.")
     if config.processing.knowledge_preparation == "remote_worker" and not config.knowledge_worker.token.strip():
         if os.getenv("APP_ENV", "").lower() in {"production", "prod"}:
             raise RuntimeError(

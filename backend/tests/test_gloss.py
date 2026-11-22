@@ -22,6 +22,28 @@ def test_gloss_batches_keep_long_documents_within_a_bounded_request_count():
     assert len(batches) <= 100
 
 
+def test_api_gloss_batches_are_small_enough_for_structured_output():
+    from types import SimpleNamespace
+
+    from app.core.config import LLMConfig
+    from app.services.gloss import _batches_for_ai
+
+    units = [{"id": str(i), "page": 0, "text": "The model stores energy in every cell."} for i in range(100)]
+    batches = _batches_for_ai(SimpleNamespace(config=LLMConfig(provider="api")), units)
+    assert max(len(batch) for batch in batches) <= 2
+    assert max(sum(len(unit["text"]) for unit in batch) for batch in batches) <= 300
+
+
+def test_api_gloss_uses_configured_model_instead_of_cursor_override():
+    from types import SimpleNamespace
+
+    from app.core.config import LLMConfig
+    from app.services.gloss import GLOSS_MODEL, _model_for_ai
+
+    assert _model_for_ai(SimpleNamespace(config=LLMConfig(provider="api"))) is None
+    assert _model_for_ai(SimpleNamespace(config=LLMConfig(provider="cursor"))) == GLOSS_MODEL
+
+
 def test_tiles_a_sentence_into_a_pattern_and_keeps_the_original_words():
     source = "We show that the model outperforms the baseline."
     spans = tile_sentence(
@@ -88,14 +110,22 @@ def test_missing_gloss_fields_still_cover_the_sentence():
     assert unknown[0]["category"] == "term"
 
 
+def test_tile_sentence_ignores_provider_whitespace_separator():
+    spans = tile_sentence(
+        "Energy.",
+        [
+            {"text": "Energy", "category": "word", "zh": "能量"},
+            {"text": " ", "category": "word", "zh": " "},
+            {"text": ".", "category": "word", "zh": "句号"},
+        ],
+    )
+    assert [span["text"] for span in spans] == ["Energy", "."]
+
+
 @pytest.mark.asyncio
 async def test_prepare_gloss_keeps_a_sentence_the_model_cannot_tile():
     units = [{"id": "s1", "page": 0, "text": "Energy is stored."}]
-    gap = {
-        "sentences": [
-            {"id": "s1", "spans": [{"text": "Energy", "category": "word", "zh": "能量", "en": "power"}]}
-        ]
-    }
+    gap = {"sentences": [{"id": "s1", "spans": [{"text": "Energy", "category": "word", "zh": "能量", "en": "power"}]}]}
     ai = _AI([gap, gap, {"zh": "能量被储存。"}])
     spans = await prepare_gloss(ai, units)
     assert ai.calls == 3
@@ -141,7 +171,9 @@ async def test_prepare_gloss_awaits_async_checkpoint_callbacks():
     async def checkpoint(produced):
         seen.extend(produced)
 
-    spans = await prepare_gloss(_AI(["echo"]), [{"id": "s1", "page": 0, "text": "Energy is stored."}], on_batch=checkpoint)
+    spans = await prepare_gloss(
+        _AI(["echo"]), [{"id": "s1", "page": 0, "text": "Energy is stored."}], on_batch=checkpoint
+    )
     assert seen == spans
 
 
@@ -193,7 +225,9 @@ async def test_prepare_gloss_retries_a_sentence_that_does_not_cover_the_source()
                 "sentences": [
                     {
                         "id": "s1",
-                        "spans": [{"text": "LLM", "category": "abbreviation", "zh": "大语言模型", "role": "本句被定义的缩写"}],
+                        "spans": [
+                            {"text": "LLM", "category": "abbreviation", "zh": "大语言模型", "role": "本句被定义的缩写"}
+                        ],
                     }
                 ]
             },
@@ -248,6 +282,8 @@ async def test_prepare_gloss_keeps_a_long_sentence_in_its_own_batch():
         {"id": "s2", "page": 0, "text": "Next."},
     ]
     seen = []
-    spans = await prepare_gloss(_AI(["echo", "echo"]), units, on_progress=lambda done, total: seen.append((done, total)))
+    spans = await prepare_gloss(
+        _AI(["echo", "echo"]), units, on_progress=lambda done, total: seen.append((done, total))
+    )
     assert seen == [(1, 2), (2, 2)]
     assert {span["unit_id"] for span in spans} == {"s1", "s2"}

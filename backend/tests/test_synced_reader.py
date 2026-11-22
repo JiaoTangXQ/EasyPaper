@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ import fitz
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -175,6 +177,79 @@ def test_legacy_gloss_span_is_enriched_on_first_click_and_cached(reader):
     cached = reader.client.post(prefix)
     assert cached.status_code == 200
     assert len(calls) == 1
+
+
+def test_partial_gloss_payload_is_available_while_building(reader):
+    document_id = reader.bundle["document_id"]
+    with Session(reader.engine) as session:
+        session.add(ReaderBuild(id=f"{document_id}:gloss", document_id=document_id, kind="gloss", status="running"))
+        session.add(
+            ReaderGloss(
+                document_id=document_id,
+                spans_json=json.dumps(
+                    [{"id": "span-1", "unit_id": "unit-1", "page": 0, "text": "method"}],
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        session.commit()
+
+    meta = reader.service.gloss_payload(document_id, meta_only=True)
+    page = reader.service.gloss_payload(document_id, pages=[0])
+    assert meta["status"] == "running"
+    assert meta["pages"] == [0]
+    assert page["spans"][0]["id"] == "span-1"
+
+
+def test_gloss_payload_reuses_parsed_spans_until_a_checkpoint_changes_them(reader, monkeypatch):
+    document_id = reader.bundle["document_id"]
+    with Session(reader.engine) as session:
+        session.add(ReaderBuild(id=f"{document_id}:gloss", document_id=document_id, kind="gloss", status="running"))
+        session.add(ReaderGloss(document_id=document_id, spans_json=json.dumps([{"id": "a", "page": 0}])))
+        session.commit()
+    parsed = []
+    real_loads = json.loads
+
+    def counting_loads(value, *args, **kwargs):
+        if isinstance(value, str) and '"id": "' in value:
+            parsed.append(value)
+        return real_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr("app.services.synced_reader.json.loads", counting_loads)
+    first = reader.service.gloss_payload(document_id, meta_only=True)
+    for _ in range(5):
+        assert reader.service.gloss_payload(document_id, meta_only=True)["digest"] == first["digest"]
+    assert len(parsed) == 1
+
+    # A worker checkpoint (or enrichment) writes a new revision; readers must see it at once.
+    reader.service._save_gloss(document_id, [{"id": "a", "page": 0}, {"id": "b", "page": 1}])
+    updated = reader.service.gloss_payload(document_id, meta_only=True)
+    assert updated["digest"] != first["digest"]
+    assert updated["pages"] == [0, 1]
+    assert [s["id"] for s in reader.service.gloss_payload(document_id, pages=[1])["spans"]] == ["b"]
+
+
+def test_page_preview_renders_one_page_and_is_scoped_to_the_owner(reader):
+    document_id = reader.bundle["document_id"]
+    version = next(v for v in reader.bundle["versions"] if v["kind"] == "bilingual")
+    base = f"/api/reader/documents/{document_id}/versions/{version['id']}/pages"
+
+    response = reader.client.get(f"{base}/1/preview", params={"width": 900})
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content[:3] == b"\xff\xd8\xff"
+    with Image.open(BytesIO(response.content)) as image:
+        assert image.width == 800  # snapped to a cached width
+    assert reader.client.get(f"{base}/1/preview", params={"width": 900}).content == response.content
+    stored = reader.service.version(document_id, version["id"])
+    assert (Path(stored.path).parent / "previews" / f"{stored.fingerprint}-p1-w800.jpg").is_file()
+
+    assert reader.client.get(f"{base}/2/preview").status_code == 404
+    assert reader.client.get(f"{base}/-1/preview").status_code == 404
+    reader.app.dependency_overrides[get_current_user] = lambda: User(
+        id=2, email="two@example.com", hashed_password="unused"
+    )
+    assert reader.client.get(f"{base}/0/preview").status_code == 404
 
 
 def url(reader, annotation_id="annotation1"):
@@ -3060,3 +3135,186 @@ def test_gloss_mode_prepares_a_span_for_every_original_sentence(reader):
     bundle = reader.client.get(f"/api/reader/documents/{document_id}").json()
     assert bundle["builds"][-1]["kind"] == "gloss"
     assert bundle["builds"][-1]["status"] == "completed"
+
+
+def _three_page_paper(reader, task_id):
+    """A second paper whose Chinese build runs through the real pdf2zh renderer."""
+    source = reader.source.parent / f"{task_id}.pdf"
+    with fitz.open() as pdf:
+        for number in (1, 2, 3):
+            page = pdf.new_page(width=420, height=300)
+            page.insert_text((30, 60), f"Page {number} explains how models learn.", fontsize=12, fontname="tiro")
+        source.write_bytes(pdf.tobytes())
+    with Session(reader.engine) as session:
+        session.add(
+            Task(
+                task_id=task_id,
+                filename=f"{task_id}.pdf",
+                user_id=1,
+                status=TaskStatus.COMPLETED,
+                original_pdf_path=str(source),
+            )
+        )
+        session.commit()
+    return reader.client.get(f"/api/reader/tasks/{task_id}").json()["document_id"]
+
+
+@pytest.fixture
+def real_pdf2zh(reader, tmp_path, monkeypatch):
+    """pdf2zh with only the layout model, the font download and the LLM call stubbed."""
+    from pdf2zh import high_level
+    from pdf2zh.cache import TranslationCache
+    from pdf2zh.config import ConfigManager
+    from pdf2zh.doclayout import DocLayoutModel
+
+    from app.core.config import AppConfig
+    from app.services.document_processor import DocumentProcessor
+
+    for key in ("OPENAILIKED_API_KEY", "OPENAILIKED_BASE_URL", "OPENAILIKED_MODEL"):
+        monkeypatch.setenv(key, "fixture")
+    persisted = []
+    monkeypatch.setattr(ConfigManager, "get_translator_by_name", lambda *_: None)
+    monkeypatch.setattr(ConfigManager, "set_translator_by_name", lambda _name, envs: persisted.append(dict(envs)))
+    monkeypatch.setattr(TranslationCache, "get", lambda *_: None)
+    monkeypatch.setattr(TranslationCache, "set", lambda *_: None)
+    font = tmp_path / "fixture-font.cff"
+    font.write_bytes(fitz.Font("helv").buffer)
+    monkeypatch.setattr(high_level, "download_remote_fonts", lambda _lang: str(font))
+    model = SimpleNamespace(predict=lambda *_args, **_kwargs: [SimpleNamespace(boxes=[], names={})])
+    monkeypatch.setattr(DocLayoutModel, "load_available", lambda: model)
+    config = AppConfig(
+        llm={"api_key": "fixture", "base_url": "https://example.invalid/v1"},
+        processing={"translation_threads": 1},
+    )
+    reader.reading.reader_processor = DocumentProcessor(
+        config, SimpleNamespace(update_progress=lambda *_args: None), ai_client=SimpleNamespace()
+    )
+    return persisted
+
+
+def _difference(first: bytes, second: bytes) -> float:
+    """Share of pixels that visibly differ (the pages are mostly white paper)."""
+    from PIL import ImageChops
+
+    with Image.open(BytesIO(first)) as a, Image.open(BytesIO(second)) as b:
+        delta = ImageChops.difference(a.convert("L"), b.convert("L"))
+        changed = sum(1 for value in delta.getdata() if value > 48)
+        return changed / (delta.width * delta.height)
+
+
+def test_translated_pages_are_readable_while_later_pages_are_still_translating(reader, real_pdf2zh, monkeypatch):
+    from pdf2zh.translator import OpenAIlikedTranslator
+
+    document_id = _three_page_paper(reader, "three-pages")
+    base = f"/api/reader/documents/{document_id}/builds/chinese/pages"
+    seen = {}
+
+    def translate(_self, text):
+        # pdf2zh retries every exception forever: record observations, assert later.
+        if "Page 3" in text and "pages" not in seen:
+            build = next(b for b in reader.service.bundle(document_id, 1)["builds"] if b["kind"] == "chinese")
+            seen["pages"] = build.get("pages")
+            first = reader.client.get(f"{base}/0/preview", params={"width": 800})
+            seen["first"] = (first.status_code, first.headers.get("content-type"), first.content)
+            seen["third"] = reader.client.get(f"{base}/2/preview", params={"width": 800}).status_code
+            reader.app.dependency_overrides[get_current_user] = lambda: User(
+                id=2, email="two@example.com", hashed_password="unused"
+            )
+            seen["stranger"] = reader.client.get(f"{base}/0/preview", params={"width": 800}).status_code
+            reader.app.dependency_overrides[get_current_user] = lambda: User(
+                id=1, email="one@example.com", hashed_password="unused"
+            )
+        return text.replace("explains how models learn", "EXPLAINS HOW MODELS LEARN")
+
+    monkeypatch.setattr(OpenAIlikedTranslator, "do_translate", translate)
+    assert reader.service.request_build(document_id, "chinese")
+    asyncio.run(reader.service.build(document_id, "chinese"))
+
+    # While page 3 was being translated, pages 1 and 2 were already published.
+    assert seen["pages"] == {"total": 3, "done": [0, 1]}
+    status, content_type, partial_first = seen["first"]
+    assert (status, content_type) == (200, "image/jpeg")
+    assert seen["third"] == 404
+    assert seen["stranger"] == 404
+
+    bundle = reader.service.bundle(document_id, 1)
+    build = next(b for b in bundle["builds"] if b["kind"] == "chinese")
+    assert build["status"] == "completed", build
+    assert "pages" not in build
+    original = next(v for v in bundle["versions"] if v["kind"] == "original")
+    chinese = next(v for v in bundle["versions"] if v["kind"] == "chinese")
+    # The early page is the page that the finished translation contains.
+    final_first = reader.client.get(
+        f"/api/reader/documents/{document_id}/versions/{chinese['id']}/pages/0/preview", params={"width": 800}
+    ).content
+    original_first = reader.client.get(
+        f"/api/reader/documents/{document_id}/versions/{original['id']}/pages/0/preview", params={"width": 800}
+    ).content
+    # One line of text changed on an otherwise blank page: about 0.5% of the pixels.
+    assert _difference(partial_first, final_first) < 0.0005
+    assert _difference(partial_first, original_first) > 0.002
+    with fitz.open(reader.service.version(document_id, chinese["id"]).path) as pdf:
+        assert "EXPLAINS HOW MODELS LEARN" in pdf[0].get_text()
+    # Temporary pages are gone once the complete version exists.
+    folder = Path(reader.service.version(document_id, original["id"]).path).parent
+    assert not (folder / "partial" / "chinese").exists()
+    assert reader.client.get(f"{base}/0/preview").status_code == 404
+    # pdf2zh writes its envs to a JSON settings file; request state must never reach it.
+    assert all(not key.startswith("__easypaper") for envs in real_pdf2zh for key in envs)
+
+
+def test_failed_translation_discards_its_early_pages(reader, real_pdf2zh, monkeypatch):
+    from pdf2zh.translator import OpenAIlikedTranslator
+
+    from app.services.pdf2zh_codex import PDFTranslationAbort
+
+    document_id = _three_page_paper(reader, "three-pages-failing")
+    published = []
+
+    def translate(_self, text):
+        if "Page 2" in text:
+            build = next(b for b in reader.service.bundle(document_id, 1)["builds"] if b["kind"] == "chinese")
+            published.append(build.get("pages"))
+            raise PDFTranslationAbort("model unavailable")
+        return text
+
+    monkeypatch.setattr(OpenAIlikedTranslator, "do_translate", translate)
+    assert reader.service.request_build(document_id, "chinese")
+    asyncio.run(reader.service.build(document_id, "chinese"))
+
+    assert published == [{"total": 3, "done": [0]}]
+    build = next(b for b in reader.service.bundle(document_id, 1)["builds"] if b["kind"] == "chinese")
+    assert build["status"] == "error"
+    assert "pages" not in build
+    original = next(v for v in reader.service.versions(document_id) if v.kind == "original")
+    assert not (Path(original.path).parent / "partial" / "chinese").exists()
+
+
+def test_exhausted_model_quota_ends_the_translation_instead_of_retrying_forever(reader, real_pdf2zh, monkeypatch):
+    import httpx
+    import openai
+    from pdf2zh.translator import OpenAIlikedTranslator
+
+    from app.services.pdf2zh_codex import PDFTranslationAbort
+
+    document_id = _three_page_paper(reader, "three-pages-no-quota")
+    calls = []
+
+    def translate(_self, text):
+        calls.append(text)
+        if len(calls) > 20:
+            # Without the fix pdf2zh retries forever; end the test instead of hanging.
+            raise PDFTranslationAbort("test guard")
+        if "Page 2" in text:
+            request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+            raise openai.APIStatusError("quota exhausted", response=httpx.Response(402, request=request), body=None)
+        return text
+
+    monkeypatch.setattr(OpenAIlikedTranslator, "do_translate", translate)
+    assert reader.service.request_build(document_id, "chinese")
+    asyncio.run(reader.service.build(document_id, "chinese"))
+
+    assert len(calls) == 2  # page 1, then a single failed request for page 2
+    build = next(b for b in reader.service.bundle(document_id, 1)["builds"] if b["kind"] == "chinese")
+    assert build["status"] == "error"
+    assert "额度" in build["error"]
