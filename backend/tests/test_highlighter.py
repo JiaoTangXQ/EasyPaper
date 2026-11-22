@@ -1,23 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import fitz
 
 from app.services.highlighter import HighlightSelection, HighlightService
 
 
 def _font_kwargs() -> dict:
-    candidates = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    ]
-    fontfile = next((path for path in candidates if Path(path).exists()), None)
-    if not fontfile:
-        return {}
-    return {"fontfile": fontfile, "fontname": "cjk"}
+    # PyMuPDF's built-in CJK font exists on every platform; system fonts do not
+    # (the Ubuntu CI runner has none, which silently dropped the Chinese text).
+    return {"fontname": "china-s"}
 
 
 def _build_cross_line_chinese_pdf() -> bytes:
